@@ -1,0 +1,11 @@
+asia.liquidinc.ekyc.applicant
+asia.liquidinc.ekyc.applicant.core.function
+asia.liquidinc.ekyc.applicant.external
+asia.liquidinc.ekyc.applicant.external.result
+asia.liquidinc.ekyc.applicant.external.result.auto
+asia.liquidinc.ekyc.applicant.external.result.chip
+asia.liquidinc.ekyc.applicant.external.result.document
+asia.liquidinc.ekyc.applicant.external.result.document.optional
+asia.liquidinc.ekyc.applicant.external.result.face
+asia.liquidinc.ekyc.applicant.external.result.jpki
+asia.liquidinc.ekyc.applicant.external.result.ocr
