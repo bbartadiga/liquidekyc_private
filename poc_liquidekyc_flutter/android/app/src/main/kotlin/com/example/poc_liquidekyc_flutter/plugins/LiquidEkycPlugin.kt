@@ -123,6 +123,7 @@ class LiquidEkycPlugin : FlutterPlugin, ActivityAware {
             "changeLanguage" -> FinalizeHandler.handleChangeLanguage(result)
             "getSdkVersion" -> result.success(FinalizeHandler.getSdkVersion())
             "isNfcAvailable" -> result.success(FinalizeHandler.isNfcAvailable())
+            "getOcrResults" -> FinalizeHandler.handleGetOcrResults(result)
             else -> result.notImplemented()
         }
     }

@@ -151,4 +151,36 @@ class ChannelFinalizeHandler {
       return false;
     }
   }
+
+  static Future<Map<String, dynamic>?> getOcrResults(
+    LiquidEkycChannel channel,
+  ) async {
+    channel.log('getOcrResults called - Mode: ${channel.isDebugMode ? "DEBUG" : "REAL"}');
+
+    if (channel.isDebugMode) {
+      return {
+        'status': 'success',
+        'ocr': {
+          'name': 'Demo User (DEBUG)',
+          'nameKana': 'デモ ユーザー',
+          'address': '123 Demo Street',
+          'dateOfBirth': '1990-01-01',
+          'expiryDate': '2030-01-01',
+          'documentNumber': 'DM123456789',
+        },
+      };
+    }
+    try {
+      channel.log('Calling native getOcrResults...');
+      final result = await channel.channel.invokeMethod<Map<dynamic, dynamic>>('getOcrResults');
+      channel.log('getOcrResults result: ${result != null ? "received" : "null"}');
+      return Map<String, dynamic>.from(result ?? {});
+    } on PlatformException catch (e) {
+      channel.log('getOcrResults PlatformException: ${e.code} - ${e.message}');
+      return null;
+    } catch (e) {
+      channel.log('getOcrResults Exception: $e');
+      return null;
+    }
+  }
 }

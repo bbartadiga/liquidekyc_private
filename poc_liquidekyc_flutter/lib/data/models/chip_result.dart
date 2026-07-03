@@ -442,56 +442,114 @@ class MynaIdentificationResult {
 
 class OcrResult {
   final String? name;
-  final String? nameKana;
+  final String? birthday;
+  final String? sex;
   final String? address;
-  final String? dateOfBirth;
-  final String? expiryDate;
-  final String? documentNumber;
+  final String? addressPref;
+  final String? addressCity;
+  final String? addressOther;
+  final String? zipCode;
+  final String? expireDate;
+  final String? idNumber;
   final String? issueDate;
-  final Sex? sex;
-  final String? residenceStatus;
-  final String? periodOfStay;
+  final String? nationality;
+  final String? residentStatus;
+  final String? stayPeriod;
+  final String? stayExpireDate;
+  final String? issuingAuthority;
+  final String? addressChanged;
+  final String? nameChanged;
+  final String? remarksExist;
+  final String? employmentRestriction;
+  final String? permittedDate;
+  final String? kindOfPermission;
+  final List<String>? driversLicenseTypes;
 
   OcrResult({
     this.name,
-    this.nameKana,
-    this.address,
-    this.dateOfBirth,
-    this.expiryDate,
-    this.documentNumber,
-    this.issueDate,
+    this.birthday,
     this.sex,
-    this.residenceStatus,
-    this.periodOfStay,
+    this.address,
+    this.addressPref,
+    this.addressCity,
+    this.addressOther,
+    this.zipCode,
+    this.expireDate,
+    this.idNumber,
+    this.issueDate,
+    this.nationality,
+    this.residentStatus,
+    this.stayPeriod,
+    this.stayExpireDate,
+    this.issuingAuthority,
+    this.addressChanged,
+    this.nameChanged,
+    this.remarksExist,
+    this.employmentRestriction,
+    this.permittedDate,
+    this.kindOfPermission,
+    this.driversLicenseTypes,
   });
 
   factory OcrResult.fromMap(Map<String, dynamic>? map) {
     return OcrResult(
       name: map?['name'] as String?,
-      nameKana: map?['nameKana'] as String?,
+      birthday: (map?['birthday'] ?? map?['dateOfBirth']) as String?,
+      sex: map?['sex'] as String?,
       address: map?['address'] as String?,
-      dateOfBirth: map?['dateOfBirth'] as String?,
-      expiryDate: map?['expiryDate'] as String?,
-      documentNumber: map?['documentNumber'] as String?,
+      addressPref: map?['addressPref'] as String?,
+      addressCity: map?['addressCity'] as String?,
+      addressOther: map?['addressOther'] as String?,
+      zipCode: map?['zipCode'] as String?,
+      expireDate: (map?['expireDate'] ?? map?['expiryDate']) as String?,
+      idNumber: (map?['idNumber'] ?? map?['documentNumber']) as String?,
       issueDate: map?['issueDate'] as String?,
-      sex: Sex.fromString(map?['sex'] as String?),
-      residenceStatus: map?['residenceStatus'] as String?,
-      periodOfStay: map?['periodOfStay'] as String?,
+      nationality: map?['nationality'] as String?,
+      residentStatus: (map?['residentStatus'] ?? map?['residenceStatus']) as String?,
+      stayPeriod: (map?['stayPeriod'] ?? map?['periodOfStay']) as String?,
+      stayExpireDate: map?['stayExpireDate'] as String?,
+      issuingAuthority: map?['issuingAuthority'] as String?,
+      addressChanged: map?['addressChanged'] as String?,
+      nameChanged: map?['nameChanged'] as String?,
+      remarksExist: map?['remarksExist'] as String?,
+      employmentRestriction: map?['employmentRestriction'] as String?,
+      permittedDate: map?['permittedDate'] as String?,
+      kindOfPermission: map?['kindOfPermission'] as String?,
+      driversLicenseTypes: (map?['driversLicenseTypes'] as List<dynamic>?)?.cast<String>(),
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
       'name': name,
-      'nameKana': nameKana,
+      'birthday': birthday,
+      'sex': sex,
       'address': address,
-      'dateOfBirth': dateOfBirth,
-      'expiryDate': expiryDate,
-      'documentNumber': documentNumber,
+      'addressPref': addressPref,
+      'addressCity': addressCity,
+      'addressOther': addressOther,
+      'zipCode': zipCode,
+      'expireDate': expireDate,
+      'idNumber': idNumber,
       'issueDate': issueDate,
-      'sex': sex?.name,
-      'residenceStatus': residenceStatus,
-      'periodOfStay': periodOfStay,
+      'nationality': nationality,
+      'residentStatus': residentStatus,
+      'stayPeriod': stayPeriod,
+      'stayExpireDate': stayExpireDate,
+      'issuingAuthority': issuingAuthority,
+      'addressChanged': addressChanged,
+      'nameChanged': nameChanged,
+      'remarksExist': remarksExist,
+      'employmentRestriction': employmentRestriction,
+      'permittedDate': permittedDate,
+      'kindOfPermission': kindOfPermission,
+      'driversLicenseTypes': driversLicenseTypes,
     };
   }
+
+  String get dateOfBirth => birthday ?? '';
+  String get expiryDate => expireDate ?? '';
+  String get documentNumber => idNumber ?? '';
+  String get residenceStatus => residentStatus ?? '';
+  String get periodOfStay => stayPeriod ?? '';
 }

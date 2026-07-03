@@ -170,14 +170,14 @@ class KycRepository {
   }
 
   Future<OcrResult> getOcrResults() async {
-    return OcrResult(
-      name: 'Demo User',
-      nameKana: 'デモ ユーザー',
-      address: '123 Demo Street',
-      dateOfBirth: '1990-01-01',
-      expiryDate: '2030-01-01',
-      documentNumber: 'DM123456789',
-    );
+    appLogger.i('Repository.getOcrResults() - fetching from SDK...');
+    final result = await _channel.getOcrResults();
+    if (result != null && result['ocr'] != null) {
+      appLogger.i('Repository.getOcrResults() - SDK returned OCR data');
+      return OcrResult.fromMap(result['ocr'] as Map<String, dynamic>);
+    }
+    appLogger.w('Repository.getOcrResults() - SDK returned null, returning empty');
+    return OcrResult();
   }
 
   Future<bool> changeLanguage(DisplayLanguage language) async {

@@ -106,4 +106,7 @@ class LiquidEkycChannel {
 
   Future<bool> changeLanguage(DisplayLanguage language) =>
       ChannelFinalizeHandler.changeLanguage(this, language);
+
+  Future<Map<String, dynamic>?> getOcrResults() =>
+      ChannelFinalizeHandler.getOcrResults(this);
 }
