@@ -7,6 +7,8 @@ import '../../data/models/face_results.dart';
 import '../../data/models/chip_result.dart';
 import '../../data/repositories/kyc_repository.dart';
 import '../../data/services/kyc_be_api.dart';
+import '../../data/services/kyc_retry_queue.dart';
+import '../../data/services/kyc_queue_worker.dart';
 
 class KycViewModel extends ChangeNotifier {
   final KycRepository _repository;
@@ -20,6 +22,14 @@ class KycViewModel extends ChangeNotifier {
 
   KycViewModel({KycRepository? repository})
       : _repository = repository ?? KycRepository() {
+    // Set up progress callback untuk BE API
+    _beApi.onProgress = (step, isLoading) {
+      _currentProgressStep = step;
+      _isFetchingBeData = isLoading;
+      notifyListeners();
+    };
+    
+    _initQueue();
     _initSdk();
     if (LiquidConfig.applicantId.isNotEmpty && LiquidConfig.token.isNotEmpty) {
       setCredentials(
@@ -30,6 +40,26 @@ class KycViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> _initQueue() async {
+    await KycRetryQueue.init();
+    KycQueueWorker.initialize(
+      onRetryComplete: (endpoint, success, error) {
+        _log('Queue retry ${success ? "SUCCESS" : "FAILED"}: $endpoint');
+        if (success) {
+          _pendingQueueCount--;
+          notifyListeners();
+        }
+      },
+    );
+    KycQueueWorker.start();
+    _pendingQueueCount = await KycQueueWorker.getPendingCount();
+    _log('Queue initialized. Pending: $_pendingQueueCount');
+  }
+
+  int _pendingQueueCount = 0;
+  int get pendingQueueCount => _pendingQueueCount;
+  bool get hasQueuedRequests => _pendingQueueCount > 0;
+
   KycStep _currentStep = KycStep.idle;
   KycResult? _lastResult;
   DocumentResult? _documentResult;
@@ -38,8 +68,15 @@ class KycViewModel extends ChangeNotifier {
   ChipIdentificationResult? _chipIdentificationResult;
   OcrResult? _ocrResult;
   ICCardInfoResponse? _beICCardInfo;
+  VerificationResultsResponse? _beVerificationResults;
+  OcrResultsBeResponse? _beOcrResults;
+  PhotosResponse? _bePhotos;
+  LivenessImagesResponse? _beLivenessImages;
+  bool _isRegisterApplicationInfoSuccess = false;
   String? _errorMessage;
   bool _isLoading = false;
+  bool _isFetchingBeData = false;  // Track BE API loading
+  String _currentProgressStep = '';  // Current step being processed
   bool _nfcAvailable = false;
   String? _sdkVersion;
   String _language = 'AUTO';
@@ -53,8 +90,20 @@ class KycViewModel extends ChangeNotifier {
   ChipIdentificationResult? get chipIdentificationResult => _chipIdentificationResult;
   OcrResult? get ocrResult => _ocrResult;
   ICCardInfoResponse? get beICCardInfo => _beICCardInfo;
+  set beICCardInfo(ICCardInfoResponse? value) => _beICCardInfo = value;
+  VerificationResultsResponse? get beVerificationResults => _beVerificationResults;
+  set beVerificationResults(VerificationResultsResponse? value) => _beVerificationResults = value;
+  OcrResultsBeResponse? get beOcrResults => _beOcrResults;
+  set beOcrResults(OcrResultsBeResponse? value) => _beOcrResults = value;
+  PhotosResponse? get bePhotos => _bePhotos;
+  set bePhotos(PhotosResponse? value) => _bePhotos = value;
+  LivenessImagesResponse? get beLivenessImages => _beLivenessImages;
+  set beLivenessImages(LivenessImagesResponse? value) => _beLivenessImages = value;
+  bool get isRegisterApplicationInfoSuccess => _isRegisterApplicationInfoSuccess;
   String? get errorMessage => _errorMessage;
   bool get isLoading => _isLoading;
+  bool get isFetchingBeData => _isFetchingBeData;
+  String get currentProgressStep => _currentProgressStep;
   bool get nfcAvailable => _nfcAvailable;
   String? get sdkVersion => _sdkVersion;
   DisplayLanguage get currentLanguage => DisplayLanguage.fromString(_language);
@@ -425,6 +474,23 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
           return KycResult.error(errorCode: 'CHIP_ERROR', message: _errorMessage);
         }
         _log('[STEP $stepNum] IC Card (NFC) → SUCCESS');
+
+        // ========================================
+        // [SDK] Get OCR Results for quick preview
+        // Called after IC chip verification for instant display
+        // ========================================
+        if (_ocrResult == null) {
+          _log('[SDK] Calling getOcrResults() for quick preview...');
+          appLogger.i('[SDK] Calling getOcrResults()...');
+          _ocrResult = await _repository.getOcrResults();
+          if (_ocrResult != null && _ocrResult!.name != null) {
+            _log('[SDK] getOcrResults → SUCCESS | name:${_ocrResult!.name}');
+            appLogger.i('[SDK] getOcrResults → SUCCESS');
+          } else {
+            _log('[SDK] getOcrResults → returned null/empty');
+            appLogger.w('[SDK] getOcrResults → null or empty');
+          }
+        }
       }
 
       if (step == 'document') {
@@ -477,6 +543,54 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
       stepNum++;
     }
 
+    // ========================================
+    // [STEP BE-1] Register Application Info (REQUIRED by Liquid)
+    // WAJIB dipanggil sebelum activate() dan sebelum API lain berfungsi
+    // ========================================
+    if (_dynamicApplicantId != null && !_isRegisterApplicationInfoSuccess) {
+      _log('[BE-1] Calling RegisterApplicationInfo...');
+      appLogger.i('[BE-1] Calling RegisterApplicationInfo...');
+
+      final registerResult = await _beApi.registerApplicationInfo(
+        applicantId: _dynamicApplicantId!,
+        applicantName: _chipVerificationResult?.chipData?.displayName ??
+                       _beICCardInfo?.displayName ??
+                       'User',
+        dateOfBirth: _chipVerificationResult?.chipData?.displayBirthday ??
+                     _beICCardInfo?.displayBirthday ??
+                     '19900101',
+        address: _chipVerificationResult?.chipData?.fullAddress ??
+                 _beICCardInfo?.fullAddress ??
+                 'Address',
+      );
+
+      if (registerResult?.isSuccess == true) {
+        _isRegisterApplicationInfoSuccess = true;
+        _log('[BE-1] RegisterApplicationInfo → SUCCESS');
+        appLogger.i('[BE-1] RegisterApplicationInfo → SUCCESS | appId:${registerResult?.applicationId}');
+      } else {
+        _log('[BE-1] RegisterApplicationInfo → FAILED | ${registerResult?.errorMessage ?? "unknown"}');
+        appLogger.e('[BE-1] RegisterApplicationInfo → FAILED | ${registerResult?.errorMessage ?? "unknown"}');
+      }
+    }
+
+    // ========================================
+    // [STEP BE-2] Get Verification Results (Face Match Score, Liveness)
+    // ========================================
+    if (_dynamicApplicantId != null && _beVerificationResults == null) {
+      _log('[BE-2] Calling getVerificationResults...');
+      appLogger.i('[BE-2] Calling getVerificationResults...');
+
+      _beVerificationResults = await _beApi.getVerificationResults(_dynamicApplicantId!);
+      if (_beVerificationResults?.isSuccess == true) {
+        _log('[BE-2] VerificationResults → SUCCESS | faceMatchScore:${_beVerificationResults?.faceMatchScore}');
+        appLogger.i('[BE-2] VerificationResults → SUCCESS | score:${_beVerificationResults?.faceMatchScore}, liveness:${_beVerificationResults?.livenessResult}');
+      } else {
+        _log('[BE-2] VerificationResults → FAILED');
+        appLogger.e('[BE-2] VerificationResults → FAILED | ${_beVerificationResults?.errorMessage}');
+      }
+    }
+
     _log('[FINAL] Activate KYC → STARTING...');
     _currentStep = KycStep.activating;
     notifyListeners();
@@ -501,7 +615,86 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
           _log('[BE] Failed to get IC Card Info');
         }
       }
-      
+
+      // ========================================
+      // [BE-3] Get OCR Results from BE (Official Data)
+      // ========================================
+      if (_dynamicApplicantId != null && _beOcrResults == null) {
+        _log('[BE-3] Calling getOcrResultsFromBe...');
+        appLogger.i('[BE-3] Calling getOcrResultsFromBe...');
+
+        _beOcrResults = await _beApi.getOcrResultsFromBe(_dynamicApplicantId!);
+        if (_beOcrResults?.isSuccess == true) {
+          _log('[BE-3] getOcrResultsFromBe → SUCCESS');
+          appLogger.i('[BE-3] getOcrResultsFromBe → SUCCESS | name:${_beOcrResults?.name}');
+        } else {
+          _log('[BE-3] getOcrResultsFromBe → FAILED');
+          appLogger.e('[BE-3] getOcrResultsFromBe → FAILED | ${_beOcrResults?.errorMessage}');
+        }
+      }
+
+      // ========================================
+      // [BE-4] Get Liveness Images (Face Photos)
+      // ========================================
+      if (_dynamicApplicantId != null && _beLivenessImages == null) {
+        _log('[BE-4] Calling getLivenessImages...');
+        appLogger.i('[BE-4] Calling getLivenessImages...');
+
+        _beLivenessImages = await _beApi.getLivenessImages(_dynamicApplicantId!);
+        if (_beLivenessImages?.isSuccess == true) {
+          _log('[BE-4] getLivenessImages → SUCCESS | count:${_beLivenessImages?.livenessImages?.length ?? 0}');
+          appLogger.i('[BE-4] getLivenessImages → SUCCESS | count:${_beLivenessImages?.livenessImages?.length ?? 0}');
+        } else {
+          _log('[BE-4] getLivenessImages → FAILED');
+          appLogger.e('[BE-4] getLivenessImages → FAILED | ${_beLivenessImages?.errorMessage}');
+        }
+      }
+
+      // ========================================
+      // [BE-5] Get Document Photos
+      // ========================================
+      if (_dynamicApplicantId != null && _bePhotos == null) {
+        _log('[BE-5] Calling getPhotos...');
+        appLogger.i('[BE-5] Calling getPhotos...');
+
+        _bePhotos = await _beApi.getPhotos(_dynamicApplicantId!);
+        if (_bePhotos?.isSuccess == true) {
+          _log('[BE-5] getPhotos → SUCCESS');
+          appLogger.i('[BE-5] getPhotos → SUCCESS | docs:${_bePhotos?.idDocumentPhotos?.length ?? 0}');
+        } else {
+          _log('[BE-5] getPhotos → FAILED');
+          appLogger.e('[BE-5] getPhotos → FAILED | ${_bePhotos?.errorMessage}');
+        }
+      }
+
+      // ========================================
+      // [BE-6] Register KYC Result (for masking)
+      // Optional - untuk trigger auto-masking
+      // ========================================
+      if (_dynamicApplicantId != null && _isRegisterApplicationInfoSuccess) {
+        _log('[BE-6] Calling registerKycResult...');
+        appLogger.i('[BE-6] Calling registerKycResult...');
+
+        final kycRegistered = await _beApi.registerKycResult(
+          applicantId: _dynamicApplicantId!,
+          kycResult: '0',  // 0 = OK, 1 = NG
+          hasSensitiveInfo: true,  // Set true untuk trigger masking
+        );
+
+if (kycRegistered) {
+          _log('[BE-6] registerKycResult → SUCCESS');
+          appLogger.i('[BE-6] registerKycResult → SUCCESS');
+        } else {
+          _log('[BE-6] registerKycResult → FAILED');
+          _log('[BE-6] registerKycResult → FAILED (non-critical)');
+        }
+      }
+
+      // Reset progress state after all BE API calls done
+      _currentProgressStep = '';
+      _isFetchingBeData = false;
+      notifyListeners();
+
       _currentStep = KycStep.completed;
     } else {
       _log('[FINAL] Activate KYC → FAILED | status:${activateResult.status.displayName} | msg:${activateResult.additionalDataMessage??"none"}');
@@ -510,6 +703,9 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
       _errorMessage = activateResult.additionalDataMessage ?? activateResult.status.displayName;
     }
 
+    // Reset progress state on error too
+    _currentProgressStep = '';
+    _isFetchingBeData = false;
     _isLoading = false;
     notifyListeners();
     return activateResult;
@@ -611,6 +807,13 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
       'chipResult': _chipVerificationResult?.isSuccess ?? false,
       'overallResult': _lastResult?.isSuccess ?? false,
       'ocrData': _ocrResult?.toMap(),
+      'queuedRequests': _pendingQueueCount,
     };
+  }
+
+  @override
+  void dispose() {
+    KycQueueWorker.dispose();
+    super.dispose();
   }
 }

@@ -431,6 +431,7 @@ class _KycTokenScreenState extends State<KycTokenScreen> {
                         faceResult: viewModel.faceResult,
                         chipResult: viewModel.chipVerificationResult,
                         beICCardInfo: viewModel.beICCardInfo,
+                        pendingQueueCount: viewModel.pendingQueueCount,
                         onDone: () => Navigator.of(context).popUntil((route) => route.isFirst),
                       ),
                     ),

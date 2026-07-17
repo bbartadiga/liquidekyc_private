@@ -4,6 +4,19 @@ import '../constant/liquid_constants.dart';
 import 'app_logger.dart';
 import 'liquid_ekyc_channel.dart';
 
+Map<String, dynamic> _convertMap(dynamic source) {
+  if (source == null) return {};
+  if (source is Map) {
+    return Map<String, dynamic>.fromEntries(
+      source.entries.map((e) => MapEntry(
+        e.key.toString(),
+        e.value is Map ? _convertMap(e.value) : e.value,
+      )),
+    );
+  }
+  return {};
+}
+
 class ChannelTermsHandler {
   static Future<Map<String, dynamic>?> showTermsOfUse(
     LiquidEkycChannel channel,
@@ -70,7 +83,7 @@ class ChannelTermsHandler {
         appLogger.e('  Message: $errorMessage');
       }
       
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('[STEP 10] PlatformException: ${e.code} - ${e.message}');
       appLogger.e('===========================================');

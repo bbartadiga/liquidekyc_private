@@ -132,7 +132,16 @@ class ChipVerificationResult {
     for (final key in possibleKeys) {
       if (map[key] != null && map[key] is Map) {
         appLogger.i('[ChipParse] ✓ Found at key: $key');
-        return LiquidChipDataModel.fromMap(map[key] as Map<String, dynamic>);
+        // Handle Map<Object?, Object?> → Map<String, dynamic>
+        final rawMap = map[key] as Map;
+        final convertedMap = <String, dynamic>{};
+        for (final k in rawMap.keys) {
+          final keyStr = k?.toString();
+          if (keyStr != null) {
+            convertedMap[keyStr] = rawMap[k];
+          }
+        }
+        return LiquidChipDataModel.fromMap(convertedMap);
       }
     }
     
@@ -266,23 +275,36 @@ class LiquidChipDataModel {
   });
 
   factory LiquidChipDataModel.fromMap(Map<String, dynamic>? map) {
+    if (map == null) return LiquidChipDataModel();
+    
+    // Handle sex - bisa int (1/2) atau string
+    final sexValue = map['sex'];
+    Sex? sex;
+    if (sexValue != null) {
+      if (sexValue is int) {
+        sex = sexValue == 1 ? Sex.male : (sexValue == 2 ? Sex.female : Sex.unknown);
+      } else {
+        sex = Sex.fromString(sexValue.toString());
+      }
+    }
+    
     return LiquidChipDataModel(
-      name: map?['name'] as String?,
-      nameKana: map?['nameKana'] as String?,
-      birthday: map?['birthday'] as String?,
-      sex: Sex.fromString(map?['sex'] as String?),
-      address: map?['address'] as String?,
-      addressPref: map?['addressPref'] as String?,
-      addressCity: map?['addressCity'] as String?,
-      addressOther: map?['addressOther'] as String?,
-      idNumber: map?['idNumber'] as String?,
-      issueDate: map?['issueDate'] as String?,
-      expireDate: map?['expireDate'] as String?,
-      myNumber: map?['myNumber'] as String?,
-      hasIdFacePhoto: map?['idFacePhoto'] != null,
-      hasDocumentFrontImage: map?['documentImage'] != null,
-      residenceCardType: map?['residenceCardType'] as String?,
-      zipCode: map?['zipCode'] as String?,
+      name: map['name']?.toString(),
+      nameKana: map['nameKana']?.toString(),
+      birthday: map['birthday']?.toString(),
+      sex: sex,
+      address: map['address']?.toString(),
+      addressPref: map['addressPref']?.toString(),
+      addressCity: map['addressCity']?.toString(),
+      addressOther: map['addressOther']?.toString(),
+      idNumber: map['idNumber']?.toString(),
+      issueDate: map['issueDate']?.toString(),
+      expireDate: map['expireDate']?.toString(),
+      myNumber: map['myNumber']?.toString(),
+      hasIdFacePhoto: map['idFacePhoto'] != null,
+      hasDocumentFrontImage: map['documentImage'] != null,
+      residenceCardType: map['residenceCardType']?.toString(),
+      zipCode: map['zipCode']?.toString(),
     );
   }
 
@@ -290,24 +312,35 @@ class LiquidChipDataModel {
     final parts = [addressPref, addressCity, addressOther, address]
         .where((p) => p != null && p.isNotEmpty)
         .toList();
-    return parts.isNotEmpty ? parts.join(' ') : address ?? '-';
+    return parts.isNotEmpty ? parts.join(' ') : (address ?? '');
   }
 
-  String get displayName => name ?? '-';
-  String get displayNameKana => nameKana ?? '-';
-  String get displayBirthday => _formatDate(birthday);
-  String get displayExpireDate => _formatDate(expireDate);
-  String get displayIssueDate => _formatDate(issueDate);
-  String get displaySex => sex?.name.toUpperCase() ?? '-';
-  String get displayIdNumber => idNumber ?? '-';
-
-  String _formatDate(String? date) {
-    if (date == null || date.isEmpty) return '-';
-    if (date.length == 8) {
-      return '${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}';
+  // Getters untuk display - return null kalau kosong (agar placeholder bisa tampil)
+  String? get displayName => name;
+  String? get displayNameKana => nameKana;
+  String? get displayBirthday {
+    if (birthday == null || birthday!.isEmpty) return null;
+    if (birthday!.length == 8) {
+      return '${birthday!.substring(0, 4)}-${birthday!.substring(4, 6)}-${birthday!.substring(6, 8)}';
     }
-    return date;
+    return birthday;
   }
+  String? get displayExpireDate {
+    if (expireDate == null || expireDate!.isEmpty) return null;
+    if (expireDate!.length == 8) {
+      return '${expireDate!.substring(0, 4)}-${expireDate!.substring(4, 6)}-${expireDate!.substring(6, 8)}';
+    }
+    return expireDate;
+  }
+  String? get displayIssueDate {
+    if (issueDate == null || issueDate!.isEmpty) return null;
+    if (issueDate!.length == 8) {
+      return '${issueDate!.substring(0, 4)}-${issueDate!.substring(4, 6)}-${issueDate!.substring(6, 8)}';
+    }
+    return issueDate;
+  }
+  String? get displaySex => sex?.name.toUpperCase();
+  String? get displayIdNumber => idNumber;
 }
 
 extension ChipVerificationResultDebug on ChipVerificationResult {

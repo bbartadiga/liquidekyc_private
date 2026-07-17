@@ -44,6 +44,12 @@ dependencies:
   # Share logs via WhatsApp/messages
   share_plus: ^10.1.4
 
+  # For exporting logs to file
+  path_provider: ^2.1.5
+  
+  # For persisting retry queue
+  shared_preferences: ^2.3.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

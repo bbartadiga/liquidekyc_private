@@ -4,6 +4,19 @@ import '../constant/liquid_constants.dart';
 import 'app_logger.dart';
 import 'liquid_ekyc_channel.dart';
 
+Map<String, dynamic> _convertMap(dynamic source) {
+  if (source == null) return {};
+  if (source is Map) {
+    return Map<String, dynamic>.fromEntries(
+      source.entries.map((e) => MapEntry(
+        e.key.toString(),
+        e.value is Map ? _convertMap(e.value) : e.value,
+      )),
+    );
+  }
+  return {};
+}
+
 class ChannelVerificationHandler {
   static Future<Map<String, dynamic>?> verifyIdDocument(
     LiquidEkycChannel channel, {
@@ -89,7 +102,7 @@ class ChannelVerificationHandler {
         };
       }
       
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('[STEP 12] PlatformException: ${e.code} - ${e.message}');
       appLogger.e('[STEP 12] ERROR: ${e.code} - ${e.message}');
@@ -231,7 +244,7 @@ class ChannelVerificationHandler {
         };
       }
       
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('[STEP 11] PlatformException: ${e.code} - ${e.message}');
       appLogger.e('[STEP 11] ERROR: ${e.code} - ${e.message}');
@@ -254,7 +267,7 @@ class ChannelVerificationHandler {
   static Future<Map<String, dynamic>?> verifyFace(
     LiquidEkycChannel channel, {
     bool showReviewScreen = true,
-    FaceVerificationType faceVerificationType = FaceVerificationType.active,
+    FaceVerificationType faceVerificationType = FaceVerificationType.passive,
   }) async {
     channel.log('[STEP 13] verifyFace() - type: ${faceVerificationType.value}');
     appLogger.i('[STEP 13] verifyFace() - type: ${faceVerificationType.value}');
@@ -344,7 +357,7 @@ class ChannelVerificationHandler {
         };
       }
       
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('[STEP 13] PlatformException: ${e.code} - ${e.message}');
       appLogger.e('[STEP 13] ERROR: ${e.code} - ${e.message}');
@@ -390,7 +403,7 @@ class ChannelVerificationHandler {
       final result = await channel.channel.invokeMethod<Map<dynamic, dynamic>>(
         'identifyIdChip',
       );
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('identifyIdChip ERROR: ${e.code}');
       return {
@@ -430,7 +443,7 @@ class ChannelVerificationHandler {
       final result = await channel.channel.invokeMethod<Map<dynamic, dynamic>>(
         'identifyIdMyna',
       );
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       return {
         'success': false,

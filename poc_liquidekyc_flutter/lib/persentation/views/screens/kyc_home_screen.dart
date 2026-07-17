@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../core/constant/liquid_constants.dart';
 import '../../../core/services/app_logger.dart';
 import '../../../data/services/kyc_be_api.dart';
+import '../../../data/services/kyc_queue_worker.dart';
 import '../../viewmodels/kyc_viewmodel.dart';
 import '../widgets/kyc_loading_overlay.dart';
 import 'kyc_config_screen.dart';
@@ -353,6 +354,7 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     setState(() => _isLoading = true);
 
     final icCardInfo = await _beApi.getICCardInfo(applicantId);
+    final pendingCount = await KycQueueWorker.getPendingCount();
 
     setState(() => _isLoading = false);
 
@@ -364,6 +366,7 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
         builder: (ctx) => KycResultScreen(
           isSuccess: true,
           beICCardInfo: icCardInfo,
+          pendingQueueCount: pendingCount,
           onDone: () => Navigator.of(ctx).pop(),
         ),
       ),
@@ -548,27 +551,16 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     debugPrint('[STEP 6] Starting KYC verification...');
     appLogger.i('[STEP 6] Starting KYC verification...');
 
+    // =========================================
+    // PHASE 1: SDK Verification (no loading overlay yet)
+    // =========================================
     final result = await viewModel.startKyc();
-    if (context.mounted) {
-      if (result.isSuccess) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (ctx) => KycResultScreen(
-              isSuccess: true,
-              result: result,
-              documentResult: viewModel.documentResult,
-              faceResult: viewModel.faceResult,
-              chipResult: viewModel.chipVerificationResult,
-              beICCardInfo: viewModel.beICCardInfo,
-              ocrName: viewModel.ocrResult?.name,
-              ocrAddress: viewModel.ocrResult?.address,
-              ocrDateOfBirth: viewModel.ocrResult?.dateOfBirth,
-              ocrDocumentNumber: viewModel.ocrResult?.documentNumber,
-              onDone: () => Navigator.of(ctx).popUntil((route) => route.isFirst),
-            ),
-          ),
-        );
-      } else if (result.isCancelled) {
+    
+    if (!context.mounted) return;
+
+    // Check if SDK failed
+    if (!result.isSuccess) {
+      if (result.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Verifikasi dibatalkan')),
         );
@@ -580,6 +572,286 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
           ),
         );
       }
+      return;
     }
+
+    // =========================================
+    // PHASE 2: BE API Fetch (show loading overlay HERE)
+    // =========================================
+    debugPrint('[PHASE 2] SDK completed - fetching BE data...');
+    appLogger.i('[PHASE 2] SDK completed - fetching BE data...');
+
+    // Show loading overlay with progress
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _BeLoadingDialog(
+        viewModel: viewModel,
+        onComplete: () {
+          Navigator.pop(dialogContext);
+          // Navigate to result screen after BE data is ready
+          if (context.mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (ctx) => KycResultScreen(
+                  isSuccess: true,
+                  result: result,
+                  documentResult: viewModel.documentResult,
+                  faceResult: viewModel.faceResult,
+                  chipResult: viewModel.chipVerificationResult,
+                  beICCardInfo: viewModel.beICCardInfo,
+                  beVerificationResults: viewModel.beVerificationResults,
+                  beOcrResults: viewModel.beOcrResults,
+                  bePhotos: viewModel.bePhotos,
+                  beLivenessImages: viewModel.beLivenessImages,
+                  isRegisterApplicationInfoSuccess: viewModel.isRegisterApplicationInfoSuccess,
+                  ocrName: viewModel.ocrResult?.name,
+                  ocrAddress: viewModel.ocrResult?.address,
+                  ocrDateOfBirth: viewModel.ocrResult?.birthday,
+                  ocrDocumentNumber: viewModel.ocrResult?.idNumber,
+                  ocrNationality: viewModel.beOcrResults?.nationality,
+                  ocrResidenceStatus: viewModel.beOcrResults?.residentStatus,
+                  pendingQueueCount: viewModel.pendingQueueCount,
+                  onDone: () => Navigator.of(ctx).popUntil((route) => route.isFirst),
+                ),
+              ),
+            );
+          }
+        },
+        onError: (error) {
+          Navigator.pop(dialogContext);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Gagal mengambil data: $error'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// =========================================
+// BE Loading Dialog with Progress
+// =========================================
+class _BeLoadingDialog extends StatefulWidget {
+  final KycViewModel viewModel;
+  final VoidCallback onComplete;
+  final Function(String) onError;
+
+  const _BeLoadingDialog({
+    required this.viewModel,
+    required this.onComplete,
+    required this.onError,
+  });
+
+  @override
+  State<_BeLoadingDialog> createState() => _BeLoadingDialogState();
+}
+
+class _BeLoadingDialogState extends State<_BeLoadingDialog> {
+  String _currentStep = 'Memproses...';
+  
+  final List<String> _beSteps = [
+    'Register App Info',
+    'Verification Results',
+    'IC Card Info',
+    'OCR Results',
+    'Liveness Images',
+    'Document Photos',
+  ];
+  
+  int _currentIndex = 0;
+  final Set<String> _completedSteps = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // Set up progress listener
+    widget.viewModel.addListener(_onProgressChanged);
+    // Start fetching BE data
+    _fetchBeData();
+  }
+
+  @override
+  void dispose() {
+    widget.viewModel.removeListener(_onProgressChanged);
+    super.dispose();
+  }
+
+  void _onProgressChanged() {
+    if (!mounted) return;
+    final step = widget.viewModel.currentProgressStep;
+    final isLoading = widget.viewModel.isFetchingBeData;
+    
+    if (step.isNotEmpty) {
+      setState(() {
+        _currentStep = step;
+        if (!isLoading && !_completedSteps.contains(step)) {
+          _completedSteps.add(step);
+          _currentIndex = _beSteps.indexOf(step) + 1;
+        }
+      });
+    }
+  }
+
+  Future<void> _fetchBeData() async {
+    try {
+      // Call BE API methods with the viewModel's BE API
+      final beApi = KycBeApi();
+      
+      // Set up progress callback
+      beApi.onProgress = (step, isLoading) {
+        if (mounted) {
+          setState(() {
+            _currentStep = step;
+            if (!isLoading) {
+              _completedSteps.add(step);
+              _currentIndex = _beSteps.indexOf(step) + 1;
+            }
+          });
+        }
+      };
+
+      final applicantId = widget.viewModel.currentApplicantId;
+      if (applicantId == null) {
+        widget.onError('Applicant ID not found');
+        return;
+      }
+
+      // Fetch all BE data
+      final futures = <Future>[];
+      
+      if (widget.viewModel.beVerificationResults == null) {
+        futures.add(beApi.getVerificationResults(applicantId).then((r) {
+          widget.viewModel.beVerificationResults = r;
+        }));
+      }
+      
+      if (widget.viewModel.beOcrResults == null) {
+        futures.add(beApi.getOcrResultsFromBe(applicantId).then((r) {
+          widget.viewModel.beOcrResults = r;
+        }));
+      }
+      
+      if (widget.viewModel.beICCardInfo == null) {
+        futures.add(beApi.getICCardInfo(applicantId).then((r) {
+          widget.viewModel.beICCardInfo = r;
+        }));
+      }
+      
+      if (widget.viewModel.beLivenessImages == null) {
+        futures.add(beApi.getLivenessImages(applicantId).then((r) {
+          widget.viewModel.beLivenessImages = r;
+        }));
+      }
+      
+      if (widget.viewModel.bePhotos == null) {
+        futures.add(beApi.getPhotos(applicantId).then((r) {
+          widget.viewModel.bePhotos = r;
+        }));
+      }
+
+      // Wait for all
+      await Future.wait(futures);
+      
+      if (mounted) {
+        widget.onComplete();
+      }
+    } catch (e) {
+      if (mounted) {
+        widget.onError(e.toString());
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = _completedSteps.length / _beSteps.length;
+    
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 20),
+            const Text(
+              'Mengambil Data dari Server',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _currentStep,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 20),
+            // Progress bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                backgroundColor: Colors.grey.shade200,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '${(_completedSteps.length / _beSteps.length * 100).toInt()}%',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Step list
+            ...List.generate(_beSteps.length, (index) {
+              final step = _beSteps[index];
+              final isCompleted = _completedSteps.contains(step);
+              final isCurrent = _currentStep == step && !isCompleted;
+              
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      isCompleted ? Icons.check_circle : Icons.radio_button_off,
+                      size: 18,
+                      color: isCompleted 
+                          ? Colors.green 
+                          : isCurrent 
+                              ? Colors.blue 
+                              : Colors.grey,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      step,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isCompleted 
+                            ? Colors.green 
+                            : isCurrent 
+                                ? Colors.blue 
+                                : Colors.grey,
+                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -4,6 +4,19 @@ import '../constant/liquid_constants.dart';
 import 'app_logger.dart';
 import 'liquid_ekyc_channel.dart';
 
+Map<String, dynamic> _convertMap(dynamic source) {
+  if (source == null) return {};
+  if (source is Map) {
+    return Map<String, dynamic>.fromEntries(
+      source.entries.map((e) => MapEntry(
+        e.key.toString(),
+        e.value is Map ? _convertMap(e.value) : e.value,
+      )),
+    );
+  }
+  return {};
+}
+
 class ChannelInitHandler {
   static Future<Map<String, dynamic>?> startVerify(
     LiquidEkycChannel channel, {
@@ -52,7 +65,7 @@ class ChannelInitHandler {
       );
       channel.log('[STEP 9] Native plugin result: ${result?['resultStatus'] ?? 'unknown'}');
       appLogger.i('[STEP 9] Native plugin result: ${result?['resultStatus'] ?? 'unknown'}');
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('[STEP 9] PlatformException: ${e.code} - ${e.message}');
       appLogger.e('[STEP 9] PlatformException: ${e.code} - ${e.message}');
@@ -97,7 +110,7 @@ class ChannelInitHandler {
           'apiKey': apiKey,
         },
       );
-      return Map<String, dynamic>.from(result ?? {});
+      return _convertMap(result);
     } on PlatformException catch (e) {
       channel.log('startVerifyTrial ERROR: ${e.code}');
       return {

@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../core/services/app_logger.dart';
 import '../../core/services/http_logger.dart';
 
@@ -28,14 +30,14 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
     super.dispose();
   }
 
-  String _exportAllLogs() {
+  String _exportAppLogs() {
     final buffer = StringBuffer();
-    buffer.writeln('=== LIQUID eKYC DEBUG LOG ===');
+    buffer.writeln('=== LIQUID eKYC - APP LOGS ===');
     buffer.writeln('Exported: ${DateTime.now()}');
-    buffer.writeln('Device: ${Theme.of(context).platform.toString()}');
-    buffer.writeln('');
-
-    buffer.writeln('--- APP LOGS (${_appLogger.allLogs.length}) ---');
+    buffer.writeln('Total: ${_appLogger.allLogs.length} entries');
+    buffer.writeln('Errors: ${_appLogger.errorCount}');
+    buffer.writeln('========================================\n');
+    
     for (final log in _appLogger.allLogs) {
       buffer.writeln('[${log.formattedTime}] ${log.level.label}${log.tag != null ? ' [${log.tag}]' : ''}');
       buffer.writeln('  ${log.message}');
@@ -45,19 +47,35 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
       if (log.stackTrace != null) {
         buffer.writeln('  STACK: $log.stackTrace');
       }
-    }
-
-    buffer.writeln('');
-    buffer.writeln('--- HTTP LOGS (${_httpLogger.logs.length}) ---');
-    for (final log in _httpLogger.getAll()) {
-      buffer.writeln('[${log.startTime}] ${log.method} ${log.url}');
-      buffer.writeln('  Status: ${log.statusCode} (${log.duration}ms)');
-      if (log.responseBody != null) {
-        buffer.writeln('  Response: ${log.responseBody}');
-      }
+      buffer.writeln('');
     }
 
     return buffer.toString();
+  }
+
+  String _exportHttpLogs() {
+    final buffer = StringBuffer();
+    buffer.writeln('=== LIQUID eKYC - HTTP LOGS ===');
+    buffer.writeln('Exported: ${DateTime.now()}');
+    buffer.writeln('Total: ${_httpLogger.logs.length} requests');
+    buffer.writeln('========================================\n');
+    
+    for (final log in _httpLogger.getAll()) {
+      buffer.writeln('[${log.startTime}]');
+      buffer.writeln('${log.method} ${log.url}');
+      buffer.writeln('Status: ${log.statusCode} | Duration: ${log.duration}ms');
+      if (log.responseBody != null) {
+        buffer.writeln('Response: ${log.responseBody}');
+      }
+      buffer.writeln('---');
+      buffer.writeln('');
+    }
+
+    return buffer.toString();
+  }
+
+  String _exportAllLogs() {
+    return '${_exportAppLogs()}\n\n${_exportHttpLogs()}';
   }
 
   void _copyLogs() {
@@ -68,7 +86,102 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
     );
   }
 
+  Future<void> _shareAsFile() async {
+    try {
+      // Show bottom sheet untuk pilih jenis log
+      final result = await showModalBottomSheet<String>(
+        context: context,
+        builder: (ctx) => Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Export Logs',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.description),
+                title: const Text('App Logs Only'),
+                subtitle: Text('${_appLogger.allLogs.length} entries'),
+                onTap: () => Navigator.pop(ctx, 'app'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.http),
+                title: const Text('HTTP Logs Only'),
+                subtitle: Text('${_httpLogger.logs.length} entries'),
+                onTap: () => Navigator.pop(ctx, 'http'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('All Logs'),
+                subtitle: Text('${_appLogger.allLogs.length + _httpLogger.logs.length} entries'),
+                onTap: () => Navigator.pop(ctx, 'all'),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        ),
+      );
+
+      if (result == null) return;
+
+      String logs;
+      String filename;
+      switch (result) {
+        case 'app':
+          logs = _exportAppLogs();
+          filename = 'liquid_kyc_app_logs_${_getTimestamp()}.txt';
+          break;
+        case 'http':
+          logs = _exportHttpLogs();
+          filename = 'liquid_kyc_http_logs_${_getTimestamp()}.txt';
+          break;
+        default:
+          logs = _exportAllLogs();
+          filename = 'liquid_kyc_all_logs_${_getTimestamp()}.txt';
+      }
+
+      // Show loading
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Save to temp file
+      final tempDir = await getTemporaryDirectory();
+      final file = File('${tempDir.path}/$filename');
+      await file.writeAsString(logs);
+
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading
+
+      // Share file
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: 'Liquid eKYC Debug Logs',
+        text: 'Liquid eKYC Debug Logs - Exported ${DateTime.now()}',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context); // Close loading if open
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting logs: $e'), duration: const Duration(seconds: 3)),
+      );
+    }
+  }
+
+  String _getTimestamp() {
+    final now = DateTime.now();
+    return '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}';
+  }
+
   void _shareLogs() {
+    // Old text-based share (limited)
     final logs = _exportAllLogs();
     Share.share(logs, subject: 'Liquid eKYC Debug Logs');
   }
@@ -111,10 +224,38 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
             onPressed: _copyLogs,
             tooltip: 'Copy to clipboard',
           ),
-          IconButton(
+          PopupMenuButton<String>(
             icon: const Icon(Icons.share),
-            onPressed: _shareLogs,
             tooltip: 'Share logs',
+            onSelected: (value) {
+              if (value == 'file') {
+                _shareAsFile();
+              } else if (value == 'text') {
+                _shareLogs();
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'file',
+                child: Row(
+                  children: [
+                    Icon(Icons.insert_drive_file, size: 20),
+                    SizedBox(width: 12),
+                    Text('Share as .txt file'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'text',
+                child: Row(
+                  children: [
+                    Icon(Icons.short_text, size: 20),
+                    SizedBox(width: 12),
+                    Text('Share as text (limited)'),
+                  ],
+                ),
+              ),
+            ],
           ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
