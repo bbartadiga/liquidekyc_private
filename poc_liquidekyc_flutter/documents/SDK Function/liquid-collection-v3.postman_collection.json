@@ -1,0 +1,307 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "poc-liquid v3",
+    "description": "# POC Liquid eKYC — Postman Collection (v3)\n\nKoleksi endpoint untuk **Digiremit x Liquid POC** (BNI Backend).\n\n**Version 3** — Flow baru: endpoint #2-#7 forward ke Liquid API asli (bukan in-memory mock).\nTidak perlu call SDK Apply dulu, cukup gunakan applicant_id valid dari Liquid.\n\n---\n\n## Cara Pakai\n\n1. Import collection ini ke Postman.\n2. Ubah Collection Variable:\n   - `baseURL` = `http://localhost:8080`\n   - `applicantId` = applicant_id valid dari Liquid\n3. Jalankan endpoint sesuai urutan flow.\n\n---\n\n## Header Autentikasi\n- **BE (`api-key`)**: Semua request ke BE pakai header `api-key: my-test-api-key`\n- **Liquid Connector API**: BE → Liquid Connector pakai header `X-Ekyc-Api-Key`\n- **Liquid SDK API** (applicantsdk-api / AWS API Gateway): BE → Liquid SDK pakai header `X-Api-Key`\n\n---\n\n## Label\n- `[to LIQUID]` = forward ke Liquid SDK API via `X-Api-Key`\n- `[to LIQUID CONNECTOR]` = forward ke Liquid Connector API via `X-Ekyc-Api-Key`\n- `[MOCK]` = data mock di BE, tidak call Liquid",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseURL",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "applicantId",
+      "value": "1111902224400",
+      "type": "string",
+      "description": "WAJIB DIISI — applicant_id valid dari Liquid. Bisa dari hasil POST /v1/sdk/applications atau langsung dari Liquid dashboard."
+    }
+  ],
+  "item": [
+    {
+      "name": "1. SDK Apply",
+      "description": "Endpoint untuk membuat aplikasi KYC baru di Liquid dan mendapatkan JWT token.",
+      "item": [
+        {
+          "name": "1. sdk-application [to LIQUID CONNECTOR]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"applicant_id\": \"{{applicantId}}\",\n    \"operation_assignment_priority\": \"1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseURL}}/v1/sdk/applications",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "sdk", "applications"]
+            },
+            "description": "POST /v1/sdk/applications\n\nBuat aplikasi KYC baru di Liquid.\nBE meneruskan ke Liquid Connector API (header: X-Ekyc-Api-Key).\n\nHasil response berisi token yang dipakai SDK mobile untuk scan dokumen.\n\nContoh Response (HTTP 201 Created):\n{\n  \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"\n}\n\nRef: LIQUID_eKYC_SDKApplyAPI_v1.3.6"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Application Endpoints (flow baru → LIQUID)",
+      "description": "8 endpoint utama alur KYC.\n\nFlow BARU (v3) — tidak perlu pre-register applicant_id:\n- #2 ocr-results           → Liquid SDK GET  /v1/applicants/{id}/ocr_results\n- #3 info                  → Liquid Connector POST /v1/kyc_request_informations\n- #4 ic-card-info          → Liquid SDK GET  /v1/applicants/{id}/id_document_ic_information\n- #5 photos                → Liquid SDK GET  /v1/applicants/{id}/photos\n- #6 live-verification-photos → Liquid SDK GET /v1/applicants/{id}/liveness_images\n- #7 verification-results  → Liquid SDK GET  /v1/applicants/{id}/verification_results\n- #8 kyc-result            → MOCK (tidak ada endpoint Liquid)\n- #9 delete                → MOCK (tidak ada data di DB)\n\nCatatan: Liquid SDK API (applicantsdk-api) pakai AWS API Gateway → header X-Api-Key.",
+      "item": [
+        {
+          "name": "2. ocr-results [to LIQUID]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/ocr-results",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "ocr-results"]
+            },
+            "description": "GET /v1/applications/{applicantId}/ocr-results\n\nAmbil hasil OCR dari dokumen identitas via Liquid SDK API.\nBE forward ke: GET /v1/applicants/{id}/ocr_results (header: X-Api-Key)\n\nRetry: Jika dapat error CE00017 → retry setelah 1 detik (OCR belum selesai diproses).\n\nField birthday, expire_date: format yyyyMMdd (tanpa separator).\nField yang tidak berlaku untuk jenis dokumen tertentu → null (tidak muncul di response).\n\nContoh Response (driver's license):\n{\n  \"applicant_id\": \"1111902224400\",\n  \"id_document_type\": \"01\",\n  \"name\": \"TARO YAMADA\",\n  \"birthday\": \"19900115\",\n  \"address\": \"東京都千代田区大手町1-6-1\",\n  \"id_number\": \"012345678901\",\n  \"expire_date\": \"20280101\",\n  \"zip_code\": \"1010047\",\n  \"address_pref\": \"東京都\",\n  \"address_city\": \"千代田区\",\n  \"address_other\": \"大手町1-6-1\",\n  \"drivers_license_types\": [\"普通\", \"準中型\"]\n}\n\nContoh Response (residence card):\n{\n  \"applicant_id\": \"1111902224400\",\n  \"id_document_type\": \"03\",\n  \"name\": \"ARYA YAMAMOTO\",\n  \"birthday\": \"19970627\",\n  \"address\": \"東京都千代田区大手町1-6-1\",\n  \"id_number\": \"AB12345678CD\",\n  \"expire_date\": \"20301031\",\n  \"nationality\": \"ID\",\n  \"sex\": \"1\",\n  \"resident_status\": \"技術・人文知識・国際業務\",\n  \"stay_period\": \"3年\",\n  \"stay_expire_date\": \"20301031\",\n  \"employment_restriction\": \"就労制限なし\"\n}\n\nRef: LIQUID_eKYC_013_GetOCRResultsAPI_v1.8.8"
+          },
+          "response": []
+        },
+        {
+          "name": "3. register-application-info [to LIQUID CONNECTOR]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"last_name\": \"Yamamoto\",\n    \"first_name\": \"Arya\",\n    \"birthday\": \"19970627\",\n    \"nationality\": \"ID\",\n    \"sex\": \"1\",\n    \"zip_code\": \"1000001\",\n    \"phone_number\": \"08123456789\",\n    \"address1\": \"東京都千代田区千代田1-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/info",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "info"]
+            },
+            "description": "POST /v1/applications/{applicantId}/info\n\nDaftarkan informasi applicant ke Liquid.\nBE forward ke: POST /v1/kyc_request_informations (header: X-Ekyc-Api-Key)\n\nLiquid return HTTP 201 tanpa response body jika sukses.\n\nMANDATORY fields:\n- first_name  : nama depan\n- birthday    : tanggal lahir format yyyyMMdd (contoh: \"19970627\")\n- address1    : alamat (masukkan seluruh alamat di sini jika tidak dipecah)\n\nOPTIONAL fields:\n- last_name, middle_name\n- last_name_kana, first_name_kana, middle_name_kana\n- nationality : ISO 3166-1 alpha-2 (contoh: \"ID\" untuk Indonesia)\n- sex         : lihat APIGenericCode\n- zip_code    : maks 9 karakter\n- phone_number: 10-11 digit tanpa tanda hubung\n- address2, address3, address4\n- id_number   : untuk Auto-eKYC option\n- resident_status, stay_period, stay_expire_date, permitted_date,\n  kind_of_permission, employment_restriction, issue_date\n  (hanya untuk residence card)\n\nCATATAN:\n- field 'email' TIDAK ada di spec Liquid\n- field 'applicant_name' TIDAK ada di spec Liquid (dipecah jadi last_name + first_name)\n- field 'date_of_birth' TIDAK ada di spec Liquid (field yang benar: birthday)\n- field 'address' TIDAK ada di spec Liquid (yang benar: address1 s.d. address4)\n\nRef: LIQUID_eKYC_016_RegisterApplicationInfoAPI_v1.3.2"
+          },
+          "response": []
+        },
+        {
+          "name": "4. get-ic-card-info [to LIQUID]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/ic-card-info",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "ic-card-info"]
+            },
+            "description": "GET /v1/applications/{applicantId}/ic-card-info\n\nAmbil data chip IC Card (NFC read) dari Liquid.\nBE forward ke: GET /v1/applicants/{id}/id_document_ic_information (header: X-Api-Key)\n\nSTRATEGI: Pass-through. BE inject applicant_id, semua 80+ field dari Liquid dikembalikan apa adanya.\n\nField berbeda tergantung jenis dokumen:\n  id_document_type 11 = Driver's License (Comply to He/To/Chi)\n  id_document_type 12 = National Identity Card\n  id_document_type 13 = Residence Card\n  id_document_type 42 = JPKI (Comply to Wa)\n\nContoh Response (driver's license):\n{\n  \"applicant_id\": \"1111902224400\",\n  \"id_document_type\": \"11\",\n  \"id_face_photo\": { \"file_name\": \"..._driverslicense_face.jpg\", \"image\": \"data:image/jpeg;base64,...\" },\n  \"name\": \"田中 次郎\",\n  \"name_kana\": \"タナカ ジロウ\",\n  \"birthday\": \"19900101\",\n  \"address\": \"東京都千代田区大手町1-6-1\",\n  \"address_pref\": \"東京都\",\n  \"address_city\": \"千代田区\",\n  \"id_number\": \"000000000000\",\n  \"expire_date\": \"20280101\",\n  \"drivers_license_color_class\": \"優良\",\n  \"drivers_license_types\": [\"準中型\"],\n  \"issue_date\": \"20150101\",\n  \"psc_name\": \"東京都公安委員会\",\n  \"japanese_foreigner_judgment\": \"1\"\n}\n\nCATATAN field yang TIDAK ADA di Liquid (field lama yang salah):\n  card_number  → tidak ada\n  full_name    → field yang benar: name\n  date_of_birth → field yang benar: birthday\n  expiry_date  → field yang benar: expire_date\n  issuer       → tidak ada (untuk passport: issuing_authority ada di OCR response)\n  read_status  → tidak ada\n\nRef: LIQUID_eKYC_022_GetICCardInfo_API_v1.3.9"
+          },
+          "response": []
+        },
+        {
+          "name": "5. get-photos [to LIQUID]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/photos",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "photos"]
+            },
+            "description": "GET /v1/applications/{applicantId}/photos\n\nAmbil foto wajah + foto dokumen dari Liquid.\nBE forward ke: GET /v1/applicants/{id}/photos (header: X-Api-Key)\n\nStruktur response Liquid:\n  face_front_photo   : foto wajah frontal (object)\n  id_document_photos : array foto dokumen identitas\n\nKeterangan is_masked:\n  false = belum di-mask\n  true  = sudah di-mask\n  Masked image tersedia 10 MENIT setelah KYC result di-register.\n\nKeterangan is_waiting_masked:\n  true  = KYC selesai & masking sedang berjalan\n  false = KYC belum selesai ATAU masking sudah selesai\n\nContoh Response:\n{\n  \"applicant_id\": \"1111902224400\",\n  \"face_front_photo\": {\n    \"file_name\": \"1111902224400_1_face.jpg\",\n    \"image\": \"data:image/jpeg;base64,...\"\n  },\n  \"id_document_photos\": [\n    {\n      \"file_name\": \"1111902224400_1_driverslicense_front.jpg\",\n      \"id_document_type\": \"01\",\n      \"photo_type\": \"01\",\n      \"is_masked\": false,\n      \"is_waiting_masked\": true,\n      \"image\": \"data:image/jpeg;base64,...\"\n    },\n    {\n      \"file_name\": \"1111902224400_1_driverslicense_back.jpg\",\n      \"id_document_type\": \"01\",\n      \"photo_type\": \"02\",\n      \"is_masked\": true,\n      \"is_waiting_masked\": false,\n      \"image\": \"data:image/jpeg;base64,...\"\n    }\n  ]\n}\n\nCATATAN field yang TIDAK ADA di Liquid (field lama yang salah):\n  photo_url   → tidak ada (yang benar: image, format base64)\n  captured_at → tidak ada\n\nRef: LIQUID_eKYC_010_GetPhotosAPI_v1.7.7"
+          },
+          "response": []
+        },
+        {
+          "name": "6. get-live-verification-photos [to LIQUID]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/live-verification-photos",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "live-verification-photos"]
+            },
+            "description": "GET /v1/applications/{applicantId}/live-verification-photos\n\nAmbil foto liveness check (selfie saat scan dokumen) dari Liquid SDK.\nBE forward ke: GET /v1/applicants/{id}/liveness_images (header: X-Api-Key)\n\nHanya tersedia jika aplikasi berasal dari SDK (bukan WEB).\nJumlah gambar: 1 sampai 7.\n\nContoh Response:\n{\n  \"applicant_id\": \"1111902224400\",\n  \"liveness_images\": [\n    {\n      \"file_name\": \"1111902224400_1_image1.jpg\",\n      \"image\": \"data:image/jpeg;base64,...\"\n    },\n    {\n      \"file_name\": \"1111902224400_1_image2.jpg\",\n      \"image\": \"data:image/jpeg;base64,...\"\n    }\n  ]\n}\n\nCATATAN field yang TIDAK ADA di Liquid (field lama yang salah):\n  photo_type  → tidak ada di liveness response\n  photo_url   → tidak ada (yang benar: image, format base64)\n  captured_at → tidak ada\n\nRef: LIQUID_eKYC_019_GetSDKLiveVerificationPhotosAPI_v1.1.4"
+          },
+          "response": []
+        },
+        {
+          "name": "7. get-verification-results [to LIQUID]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/verification-results",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "verification-results"]
+            },
+            "description": "GET /v1/applications/{applicantId}/verification-results\n\nAmbil hasil verifikasi otomatis dari Liquid.\nBE forward ke: GET /v1/applicants/{id}/verification_results (header: X-Api-Key)\n\nSTRATEGI: Pass-through. BE inject applicant_id, 7 top-level Liquid field dikembalikan apa adanya.\n\nKode hasil (untuk semua field string Number):\n  1 = OK\n  2 = NG\n  3 = Not implemented (setting OFF)\n  4 = Waiting\n\nCATATAN: CE00017 jika verifikasi belum selesai → retry 1 detik.\n\nContoh Response (tanpa Auto-eKYC AI):\n{\n  \"applicant_id\": \"1111902224400\",\n  \"verification_result\": {\n    \"face_verification\": \"1\",\n    \"face_verification_score\": 201,\n    \"face_photo_verification\": \"1\",\n    \"face_photo_verification_score\": -18,\n    \"id_document_verification\": null,\n    \"id_document_verification_score\": null,\n    \"injection_attack_verification\": null\n  },\n  \"multiple_user_verification_result\": null,\n  \"reuse_face_verification_result\": null,\n  \"reuse_identification_information_verification_result\": null,\n  \"warning_list_identification_information_verification_result\": null,\n  \"warning_list_face_verification_result\": null,\n  \"optional_verification_result\": null\n}\n\nJika fraud detection aktif, masing-masing object punya:\n  { \"result\": 1, \"applicant_ids\": [] }  ← 1=No match, 2=Match found\n\nJika AI verification aktif, optional_verification_result berisi 30+ field:\n  result, name, birthday, address, zip_code, nationality, sex,\n  expire_date, id_number, id_number_match, face_verification,\n  face_photo_verification, age, face_liveness_verification,\n  face_liveness_verification_score, injection_attack_verification, dll.\n\nCATATAN field yang TIDAK ADA di Liquid (field lama yang salah):\n  verification_status  → tidak ada\n  face_match_score     → yang benar: verification_result.face_verification_score\n  liveness_result      → yang benar: verification_result.face_verification\n  document_authenticity → yang benar: verification_result.id_document_verification\n  verified_at          → tidak ada\n\nRef: LIQUID_eKYC_012_GetVerificationResultsAPI_v1.3.4"
+          },
+          "response": []
+        },
+        {
+          "name": "8. register-kyc-result [MOCK]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"result\": \"OK\",\n    \"reason\": \"All verification passed\",\n    \"reviewer_id\": \"REVIEWER001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}/kyc-result",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}", "kyc-result"]
+            },
+            "description": "POST /v1/applications/{applicantId}/kyc-result\n\nMOCK - Tidak ada endpoint Liquid untuk ini. Keputusan KYC dibuat di sisi BE.\n\nField result: \"OK\" atau \"NG\"\n\nContoh Response (HTTP 201 Created):\n{\n  \"applicant_id\": \"...\",\n  \"result\": \"OK\",\n  \"registered_at\": \"2026-07-02T16:00:00\"\n}\n\nRef: LIQUID_eKYC_014_RegisterKYCResultAPI_v1.4.2"
+          },
+          "response": []
+        },
+        {
+          "name": "9. delete-user-data [MOCK]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "url": {
+              "raw": "{{baseURL}}/v1/applications/{{applicantId}}",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "applications", "{{applicantId}}"]
+            },
+            "description": "DELETE /v1/applications/{applicantId}\n\nMOCK - Tidak ada data yang disimpan di DB di flow baru, cukup return success.\n\nContoh Response (HTTP 200):\n{\n  \"applicant_id\": \"...\",\n  \"status\": \"deleted\",\n  \"message\": \"All user data has been successfully deleted\"\n}\n\nRef: LIQUID_eKYC_901_DeleteUserDataAPI_v1.3.9"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Orchestration",
+      "description": "Single endpoint yang aggregate 5 Liquid API call.\n\nFlow:\n- Step 1 SEQUENTIAL: RegisterApplicationInfo (POST) → Liquid Connector (X-Ekyc-Api-Key)\n- Delay 1 detik\n- Step 2-5 PARALLEL: GetICCardInfo, GetPhotos, GetLivenessImages, GetVerificationResults → Liquid SDK (X-Api-Key)\n- Aggregate dan return semua response\n\nRetry: 3x (fixed delay 1 detik) untuk error CE00017/CE00008/CE00004/network/5xx.",
+      "item": [
+        {
+          "name": "10. process-kyc [to LIQUID x5]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "api-key",
+                "value": "my-test-api-key",
+                "type": "text",
+                "description": "API key untuk autentikasi ke BE"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"last_name\": \"Yamamoto\",\n    \"first_name\": \"Arya\",\n    \"birthday\": \"19970627\",\n    \"nationality\": \"ID\",\n    \"sex\": \"1\",\n    \"zip_code\": \"1000001\",\n    \"phone_number\": \"08123456789\",\n    \"address1\": \"東京都千代田区千代田1-1\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseURL}}/v1/orchestration/{{applicantId}}/process-kyc",
+              "host": ["{{baseURL}}"],
+              "path": ["v1", "orchestration", "{{applicantId}}", "process-kyc"]
+            },
+            "description": "POST /v1/orchestration/{applicantId}/process-kyc\n\nSingle endpoint yang aggregate 5 Liquid API call.\n\nFlow Internal:\n1. [SEQUENTIAL] RegisterApplicationInfo  -> POST /v1/kyc_request_informations (X-Ekyc-Api-Key)\n   (delay 1 detik)\n2. [PARALLEL]\n   - GetICCardInfo           -> GET /v1/applicants/{id}/id_document_ic_information (X-Api-Key)\n   - GetPhotos               -> GET /v1/applicants/{id}/photos (X-Api-Key)\n   - GetLivenessImages       -> GET /v1/applicants/{id}/liveness_images (X-Api-Key)\n   - GetVerificationResults  -> GET /v1/applicants/{id}/verification_results (X-Api-Key)\n\nContoh Response:\n{\n  \"applicant_id\": \"...\",\n  \"register_info\": { \"application_id\": \"...\", \"status\": \"registered\" },\n  \"ic_card_info\": { \"card_number\": \"...\", \"full_name\": \"...\" },\n  \"photos\": [ { \"photo_type\": \"document_front\", \"photo_url\": \"...\" } ],\n  \"liveness_images\": [ { \"photo_type\": \"liveness\", \"photo_url\": \"...\" } ],\n  \"verification_results\": { \"verification_status\": \"approved\", \"face_match_score\": 0.98 }\n}"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
