@@ -7,7 +7,7 @@ class LiquidConfig {
   // DEBUG_MODE: 
   //   true  = mock response, no SDK call, no camera
   //   false = call actual SDK, camera works
-  // BYPASS_BE:
+  // BYPASS_BE:\
   //   true  = skip BE call, use hardcoded credentials
   //   false = call BE to get token (need BE accessible)
   // ============================================================

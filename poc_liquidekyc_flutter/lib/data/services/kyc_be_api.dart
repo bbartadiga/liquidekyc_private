@@ -885,6 +885,7 @@ class ICCardInfoResponse {
   final String? issueDate;
   final String? expireDate;
   final String? myNumber;
+  final String? idFacePhoto;
   final int? statusCode;
   final String? errorMessage;
 
@@ -902,6 +903,7 @@ class ICCardInfoResponse {
     this.issueDate,
     this.expireDate,
     this.myNumber,
+    this.idFacePhoto,
     this.statusCode,
     this.errorMessage,
   });
@@ -941,6 +943,14 @@ class ICCardInfoResponse {
   String? get displayIdNumber => idNumber;
 
   factory ICCardInfoResponse.fromMap(Map<String, dynamic> map) {
+    String? idFacePhoto;
+    final facePhotoData = map['id_face_photo'];
+    if (facePhotoData is Map) {
+      idFacePhoto = facePhotoData['image'] as String?;
+    } else if (facePhotoData is String) {
+      idFacePhoto = facePhotoData;
+    }
+
     return ICCardInfoResponse(
       isSuccess: true,
       name: map['name'],
@@ -955,6 +965,7 @@ class ICCardInfoResponse {
       issueDate: map['issue_date'],
       expireDate: map['expire_date'],
       myNumber: map['my_number'],
+      idFacePhoto: idFacePhoto,
       statusCode: map['status_code'],
     );
   }
@@ -1149,9 +1160,17 @@ class PhotosResponse {
       }
     }
 
+    String? faceFrontPhoto;
+    final facePhotoData = map['face_front_photo'];
+    if (facePhotoData is Map) {
+      faceFrontPhoto = facePhotoData['image'] as String?;
+    } else if (facePhotoData is String) {
+      faceFrontPhoto = facePhotoData;
+    }
+
     return PhotosResponse(
       isSuccess: true,
-      faceFrontPhoto: map['face_front_photo'] as String?,
+      faceFrontPhoto: faceFrontPhoto,
       idDocumentPhotos: photos.isNotEmpty ? photos : null,
       statusCode: map['status_code'],
     );
