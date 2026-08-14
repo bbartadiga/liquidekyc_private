@@ -426,9 +426,9 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
 
       // BYPASS_BE = false → call BE as normal
       debugPrint('[STEP 2] Calling BE to get token...');
-      debugPrint('  URL: http://192.168.1.41:8080/v1/sdk/applications');
+      debugPrint('  URL: , baseURL: $_beApi._baseUrl');
       appLogger.i('[STEP 2] Calling BE to get token...');
-      appLogger.i('  URL: http://192.168.1.41:8080/v1/sdk/applications');
+      appLogger.i('  URL: ');
 
       final response = await _beApi.applyForSdkToken(applicantId: applicantId);
 

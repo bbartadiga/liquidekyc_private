@@ -12,7 +12,9 @@ import 'kyc_queue_worker.dart';
 typedef ProgressCallback = void Function(String step, bool isLoading);
 
 class KycBeApi {
-  static const String _beUrl = 'http://192.168.1.41:8080';
+  // static const String _beUrl = 'http://103.108.254.29:8066/inbound-liquid';
+  // static const String _beUrl = 'http://192.168.1.41:8080';
+  static const String _beUrl = 'http://api-backend-liquid-psd.apps.dev-bpsoa.ocp.hq.bni.co.id';
   static const Duration _timeout = Duration(seconds: 60);
   static const int _maxRetries = 3;
   static const int _baseRetryDelayMs = 1000;
