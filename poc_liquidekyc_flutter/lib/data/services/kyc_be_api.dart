@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../../core/constant/liquid_constants.dart';
@@ -12,47 +13,57 @@ import 'kyc_queue_worker.dart';
 typedef ProgressCallback = void Function(String step, bool isLoading);
 
 class KycBeApi {
-  // static const String _beUrl = 'http://103.108.254.29:8066/inbound-liquid';
-  // static const String _beUrl = 'http://192.168.1.41:8080';
-  static const String _beUrl = 'http://api-backend-liquid-psd.apps.dev-bpsoa.ocp.hq.bni.co.id';
+  static const String _beUrl = 'https://103.108.254.29:8066';
   static const Duration _timeout = Duration(seconds: 60);
   static const int _maxRetries = 3;
   static const int _baseRetryDelayMs = 1000;
-  static const String _apiKey = 'DJhJDEwJENQem1xTFB3NlJodFZ1MEt0THYyMC5XVEEwNEdQc3dDT0RXY0NEYmpmL053WjVIaUt6ZnFD';
+  static const String _apiKey = 'JDJhJDEwJENQem1xTFB3NlJodFZ1MEt0THYyMC5XVEEwNEdQc3dDT0RXY0NEYmpmL053WjVIaUt6ZnFD';
   
   ProgressCallback? onProgress;
 
-  // Endpoint paths - sesuai Postman collection v3
+  // Endpoint paths - sesuai APM Collection Liquid Postman
+  static const String _pathInboundLiquid = '/inbound-liquid';
   static const String _pathSdkApplications = '/v1/sdk/applications';
-  static const String _pathApplications = '/v1/applications';
+  static const String _pathApplicants = '/v1/applicants';
+  static const String _pathKycRequestInformations = '/v1/kyc_request_informations';
   static const String _pathOrchestration = '/v1/orchestration';
 
-  // Applicant sub-resource paths - sesuai Postman collection
-  static const String _subOcrResults = 'ocr-results';
-  static const String _subIcInfo = 'ic-card-info';
+  // Applicant sub-resource paths - sesuai APM Collection Liquid Postman
+  static const String _subOcrResults = 'ocr_results';
+  static const String _subIcInfo = 'id_document_ic_information';
   static const String _subPhotos = 'photos';
-  static const String _subLivenessImages = 'live-verification-photos';
-  static const String _subVerificationResults = 'verification-results';
+  static const String _subLivenessImages = 'liveness_images';
+  static const String _subVerificationResults = 'verification_results';
   static const String _subKycResult = 'kyc-result';
 
-  String get _baseUrl => _beUrl;
+  String get _baseUrl => '$_beUrl$_pathInboundLiquid';
 
   String _applicationUrl(String applicantId, String subPath) =>
-      '$_baseUrl$_pathApplications/$applicantId/$subPath';
+      '$_baseUrl$_pathApplicants/$applicantId/$subPath';
   
   Map<String, String> get _headers => {
     'Content-Type': 'application/json',
-    'api-key': _apiKey,
+    'X-Ekyc-Api-key': _apiKey,
   };
   
   late final http.Client _client;
 
+  static const bool _bypassSsl = true;
+
   KycBeApi() {
-    if (kDebugMode) {
-      _client = HttpLoggingClient();
-    } else {
-      _client = http.Client();
+    _client = _createClient();
+  }
+
+  http.Client _createClient() {
+    if (_bypassSsl && kDebugMode) {
+      final ioClient = HttpClient();
+      ioClient.badCertificateCallback = (cert, host, port) => true;
+      return _AnnotatedClient(ioClient);
     }
+    if (kDebugMode) {
+      return HttpLoggingClient();
+    }
+    return http.Client();
   }
 
   void _log(String message) {
@@ -187,13 +198,81 @@ class KycBeApi {
     return ApplicantInfoResponse.error(statusCode: 0, message: 'Failed after retries');
   }
 
+  Future<KycRequestInformationResponse?> registerKycRequestInformation({
+    required String applicantId,
+    required String lastName,
+    required String firstName,
+    String? middleName,
+    String? lastNameKana,
+    String? firstNameKana,
+    String? middleNameKana,
+    required String birthday,
+    String? nationality,
+    required String sex,
+    String? zipCode,
+    required String phoneNumber,
+    required String address1,
+    String? address2,
+    String? address3,
+    String? address4,
+  }) async {
+    _log('registerKycRequestInformation - applicantId: $applicantId');
+    _log('URL: $_baseUrl$_pathKycRequestInformations');
+    onProgress?.call('KYC Request Info', true);
+
+    try {
+      final response = await _client.post(
+        Uri.parse('$_baseUrl$_pathKycRequestInformations'),
+        headers: _headers,
+        body: jsonEncode({
+          'applicant_id': applicantId,
+          'last_name': lastName,
+          'first_name': firstName,
+          if (middleName != null) 'middle_name': middleName,
+          if (lastNameKana != null) 'last_name_kana': lastNameKana,
+          if (firstNameKana != null) 'first_name_kana': firstNameKana,
+          if (middleNameKana != null) 'middle_name_kana': middleNameKana,
+          'birthday': birthday,
+          if (nationality != null) 'nationality': nationality,
+          'sex': sex,
+          if (zipCode != null) 'zip_code': zipCode,
+          'phone_number': phoneNumber,
+          'address1': address1,
+          if (address2 != null) 'address2': address2,
+          if (address3 != null) 'address3': address3,
+          if (address4 != null) 'address4': address4,
+        }),
+      ).timeout(_timeout);
+
+      _log('Response status: ${response.statusCode}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body);
+        _log('registerKycRequestInformation SUCCESS');
+        onProgress?.call('KYC Request Info', false);
+        return KycRequestInformationResponse.fromMap(data);
+      } else {
+        _log('ERROR: ${response.statusCode} - ${response.body}');
+        onProgress?.call('KYC Request Info', false);
+        return KycRequestInformationResponse.error(
+          statusCode: response.statusCode,
+          message: response.body,
+        );
+      }
+    } catch (e) {
+      _log('ERROR: $e');
+      onProgress?.call('KYC Request Info', false);
+      return KycRequestInformationResponse.error(statusCode: 0, message: e.toString());
+    }
+  }
+
   Future<ICCardInfoResponse?> getICCardInfo(String applicantId) async {
     _log('Getting IC Card Info from BE...');
     _log('URL: ${_applicationUrl(applicantId, _subIcInfo)}');
     onProgress?.call('IC Card Info', true);
 
     final url = _applicationUrl(applicantId, _subIcInfo);
-    final endpoint = '$_pathApplications/$applicantId/$_subIcInfo';
+    final endpoint = '$_pathApplicants/$applicantId/$_subIcInfo';
     int attempt = 0;
     int delayMs = _baseRetryDelayMs;
     final random = Random();
@@ -266,7 +345,7 @@ class KycBeApi {
   Future<VerificationResultsResponse?> getVerificationResults(String applicantId) async {
     _log('Getting Verification Results from BE...');
     final url = _applicationUrl(applicantId, _subVerificationResults);
-    final endpoint = '$_pathApplications/$applicantId/$_subVerificationResults';
+    final endpoint = '$_pathApplicants/$applicantId/$_subVerificationResults';
     int attempt = 0;
     int delayMs = _baseRetryDelayMs;
     final random = Random();
@@ -338,7 +417,7 @@ class KycBeApi {
   }) async {
     _log('RegisterApplicationInfo - applicantId: $applicantId');
     final url = _applicationUrl(applicantId, 'info');
-    final endpoint = '$_pathApplications/$applicantId/info';
+    final endpoint = '$_pathApplicants/$applicantId/info';
     int attempt = 0;
     int delayMs = _baseRetryDelayMs;
     final random = Random();
@@ -421,7 +500,7 @@ class KycBeApi {
 Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) async {
     _log('getOcrResultsFromBe - applicantId: $applicantId');
     final url = _applicationUrl(applicantId, _subOcrResults);
-    final endpoint = '$_pathApplications/$applicantId/$_subOcrResults';
+    final endpoint = '$_pathApplicants/$applicantId/$_subOcrResults';
     int attempt = 0;
     int delayMs = _baseRetryDelayMs;
     final random = Random();
@@ -490,7 +569,7 @@ Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) async {
   Future<PhotosResponse?> getPhotos(String applicantId) async {
     _log('getPhotos - applicantId: $applicantId');
     final url = _applicationUrl(applicantId, _subPhotos);
-    final endpoint = '$_pathApplications/$applicantId/$_subPhotos';
+    final endpoint = '$_pathApplicants/$applicantId/$_subPhotos';
     int attempt = 0;
     int delayMs = _baseRetryDelayMs;
     final random = Random();
@@ -559,7 +638,7 @@ Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) async {
   Future<LivenessImagesResponse?> getLivenessImages(String applicantId) async {
     _log('getLivenessImages - applicantId: $applicantId');
     final url = _applicationUrl(applicantId, _subLivenessImages);
-    final endpoint = '$_pathApplications/$applicantId/$_subLivenessImages';
+    final endpoint = '$_pathApplicants/$applicantId/$_subLivenessImages';
     int attempt = 0;
     int delayMs = _baseRetryDelayMs;
     final random = Random();
@@ -632,7 +711,7 @@ Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) async {
   }) async {
     _log('registerKycResult - applicantId: $applicantId, result: $kycResult');
     final url = _applicationUrl(applicantId, _subKycResult);
-    final endpoint = '$_pathApplications/$applicantId/$_subKycResult';
+    final endpoint = '$_pathApplicants/$applicantId/$_subKycResult';
     final body = {
       'result': kycResult,
       'reason': hasSensitiveInfo ? 'has_sensitive_info' : 'All verification passed',
@@ -1271,4 +1350,66 @@ class LivenessImage {
       image: map['image'] as String?,
     );
   }
+}
+
+class _AnnotatedClient extends http.BaseClient {
+  final HttpClient _ioClient;
+
+  _AnnotatedClient(this._ioClient);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final ioRequest = await _ioClient.openUrl(request.method, request.url);
+    request.headers.forEach((key, value) {
+      ioRequest.headers.set(key, value);
+    });
+    if (request is http.Request && request.bodyBytes.isNotEmpty) {
+      ioRequest.add(request.bodyBytes);
+    }
+    final ioResponse = await ioRequest.close();
+    final stream = ioResponse.cast<List<int>>();
+    final Map<String, String> responseHeaders = {};
+    ioResponse.headers.forEach((key, values) {
+      responseHeaders[key] = values.join(',');
+    });
+    return http.StreamedResponse(
+      stream,
+      ioResponse.statusCode,
+      headers: responseHeaders,
+    );
+  }
+}
+
+class KycRequestInformationResponse {
+  final bool isSuccess;
+  final String? applicantId;
+  final String? status;
+  final int? statusCode;
+  final String? errorMessage;
+
+  KycRequestInformationResponse({
+    required this.isSuccess,
+    this.applicantId,
+    this.status,
+    this.statusCode,
+    this.errorMessage,
+  });
+
+  factory KycRequestInformationResponse.fromMap(Map<String, dynamic> map) {
+    return KycRequestInformationResponse(
+      isSuccess: map['applicant_id'] != null,
+      applicantId: map['applicant_id'],
+      status: map['status'],
+      statusCode: map['status_code'],
+    );
+  }
+
+  factory KycRequestInformationResponse.error({
+    required int statusCode,
+    required String message,
+  }) => KycRequestInformationResponse(
+    isSuccess: false,
+    statusCode: statusCode,
+    errorMessage: message,
+  );
 }

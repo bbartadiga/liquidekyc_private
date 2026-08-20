@@ -236,7 +236,6 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text('BE: 192.168.1.41:8080', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
               ],
             ),
           ),
