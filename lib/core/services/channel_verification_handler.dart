@@ -199,24 +199,49 @@ class ChannelVerificationHandler {
       // Log chip data if present
       final chipData = result?['liquidChipData'];
       if (chipData != null && chipData is Map) {
+        final chipDoc = chipData['liquidDocumentType']?.toString() ?? '-';
+        final chipCardType = chipData['residenceCardType']?.toString() ?? '-';
+        final chipMyNumber = chipData['myNumber']?.toString();
+        final maskedMyNumber = chipMyNumber == null || chipMyNumber.isEmpty
+            ? '-'
+            : (chipMyNumber.length >= 4
+                ? '*******${chipMyNumber.substring(chipMyNumber.length - 4)}'
+                : '*******');
+
         channel.log('[STEP 11] liquidChipData: present');
-        appLogger.i('[STEP 11] liquidChipData: present');
+        channel.log('[STEP 11]   liquidDocumentType: $chipDoc');
+        channel.log('[STEP 11]   residenceCardType: $chipCardType');
         channel.log('[STEP 11]   name: ${chipData['name']}');
         channel.log('[STEP 11]   nameKana: ${chipData['nameKana']}');
         channel.log('[STEP 11]   birthday: ${chipData['birthday']}');
         channel.log('[STEP 11]   sex: ${chipData['sex']}');
-        channel.log('[STEP 11]   address: ${chipData['address']}');
+        channel.log('[STEP 11]   address: ***MASKED***');
         channel.log('[STEP 11]   idNumber: ${chipData['idNumber']}');
         channel.log('[STEP 11]   issueDate: ${chipData['issueDate']}');
         channel.log('[STEP 11]   expireDate: ${chipData['expireDate']}');
-        channel.log('[STEP 11]   idFacePhoto: ${chipData['idFacePhoto'] != null ? "present" : "null"}');
-        channel.log('[STEP 11]   residenceCardType: ${chipData['residenceCardType']}');
+        channel.log('[STEP 11]   myNumber: $maskedMyNumber');
+        channel.log('[STEP 11]   hasIdFacePhoto: ${chipData['hasIdFacePhoto'] == true}');
+        channel.log('[STEP 11]   driversLicenseTypes: ${chipData['driversLicenseTypes']}');
+
+        appLogger.i('[STEP 11] liquidChipData: present');
+        appLogger.i('[STEP 11]   liquidDocumentType: $chipDoc');
+        appLogger.i('[STEP 11]   residenceCardType: $chipCardType');
         appLogger.i('[STEP 11]   name: ${chipData['name']}');
         appLogger.i('[STEP 11]   nameKana: ${chipData['nameKana']}');
         appLogger.i('[STEP 11]   birthday: ${chipData['birthday']}');
+        appLogger.i('[STEP 11]   address: ***MASKED***');
+        appLogger.i('[STEP 11]   idNumber: ${chipData['idNumber']}');
+        appLogger.i('[STEP 11]   expireDate: ${chipData['expireDate']}');
+        appLogger.i('[STEP 11]   myNumber: $maskedMyNumber');
       } else {
         channel.log('[STEP 11] liquidChipData: NULL');
         appLogger.i('[STEP 11] liquidChipData: NULL');
+      }
+
+      final mismatch = result?['documentTypeMismatch'] == true;
+      if (mismatch) {
+        channel.log('[STEP 11] documentTypeMismatch: TRUE');
+        appLogger.e('[STEP 11] documentTypeMismatch: TRUE');
       }
       
       // Log full result keys

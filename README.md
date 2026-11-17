@@ -487,7 +487,7 @@ private val liquid: LIQUID? = null
 
 1. **Clone / Navigate ke project:**
    ```bash
-   cd /Users/admin/Documents/BNI/test-bni/poc_liquidekyc_flutter
+   cd /Users/admin/Documents/BNI/test-bni/module_liquid_ekyc
    ```
 
 2. **Setup FVM (jika belum):**

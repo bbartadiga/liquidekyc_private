@@ -1,4 +1,4 @@
-package com.example.poc_liquidekyc_flutter.plugins
+package id.co.bni.mobile_remittance_kcln_tokyo.liquid_ekyc
 
 import android.app.Activity
 import androidx.activity.ComponentActivity

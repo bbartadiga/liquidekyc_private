@@ -1,5 +1,6 @@
 import '../../core/constant/liquid_constants.dart';
 import '../../core/services/app_logger.dart';
+import '../../core/services/japanese_romaji_helper.dart';
 
 enum ChipVerificationResultStatus {
   success,
@@ -66,6 +67,8 @@ class ChipVerificationResult {
   final DocumentImage? documentImage;
   final AutoVerificationResult? autoVerificationResult;
   final LiquidChipDataModel? chipData;
+  /// true = kartu yang dibaca dari chip tidak sesuai dokumen yang diminta
+  final bool documentTypeMismatch;
 
   ChipVerificationResult({
     required this.status,
@@ -75,6 +78,7 @@ class ChipVerificationResult {
     this.documentImage,
     this.autoVerificationResult,
     this.chipData,
+    this.documentTypeMismatch = false,
   });
 
   factory ChipVerificationResult.fromMap(Map<String, dynamic>? map) {
@@ -91,6 +95,7 @@ class ChipVerificationResult {
               map?['autoVerificationResult'] as Map<String, dynamic>)
           : null,
       chipData: _parseChipData(map),
+      documentTypeMismatch: map?['documentTypeMismatch'] == true,
     );
   }
 
@@ -141,7 +146,17 @@ class ChipVerificationResult {
             convertedMap[keyStr] = rawMap[k];
           }
         }
-        return LiquidChipDataModel.fromMap(convertedMap);
+        final chipData = LiquidChipDataModel.fromMap(convertedMap);
+        appLogger.i(
+          '[ChipParse] doc=${chipData.liquidDocumentType ?? "-"} | '
+          'card_type=${chipData.residenceCardType ?? "-"} | '
+          'my_number=${chipData.displayMyNumber ?? "-"} | '
+          'name=${chipData.name ?? "-"} | '
+          'id_number=${chipData.idNumber ?? "-"} | '
+          'expire=${chipData.expireDate ?? "-"} | '
+          'drivers_license_types=${chipData.driversLicenseTypes?.join(",") ?? "-"}',
+        );
+        return chipData;
       }
     }
     
@@ -254,6 +269,14 @@ class LiquidChipDataModel {
   final bool? hasDocumentFrontImage;
   final String? residenceCardType;
   final String? zipCode;
+  // Dokumen aktual yang dibaca dari chip (bukan pilihan user)
+  final String? liquidDocumentType;
+  final String? residenceCardInfoType;
+  final List<String>? driversLicenseTypes;
+  final List<String>? driversLicenseConditions;
+  final List<String>? driversLicenseAcquisitionDates;
+  final String? residenceCardComprehensivePermission;
+  final String? residenceCardIndividualPermission;
 
   LiquidChipDataModel({
     this.name,
@@ -272,6 +295,13 @@ class LiquidChipDataModel {
     this.hasDocumentFrontImage,
     this.residenceCardType,
     this.zipCode,
+    this.liquidDocumentType,
+    this.residenceCardInfoType,
+    this.driversLicenseTypes,
+    this.driversLicenseConditions,
+    this.driversLicenseAcquisitionDates,
+    this.residenceCardComprehensivePermission,
+    this.residenceCardIndividualPermission,
   });
 
   factory LiquidChipDataModel.fromMap(Map<String, dynamic>? map) {
@@ -301,10 +331,23 @@ class LiquidChipDataModel {
       issueDate: map['issueDate']?.toString(),
       expireDate: map['expireDate']?.toString(),
       myNumber: map['myNumber']?.toString(),
-      hasIdFacePhoto: map['idFacePhoto'] != null,
-      hasDocumentFrontImage: map['documentImage'] != null,
+      hasIdFacePhoto: map['hasIdFacePhoto'] == true || map['idFacePhoto'] != null,
+      hasDocumentFrontImage:
+          map['hasDocumentFrontImage'] == true || map['documentImage'] != null,
       residenceCardType: map['residenceCardType']?.toString(),
       zipCode: map['zipCode']?.toString(),
+      liquidDocumentType: map['liquidDocumentType']?.toString(),
+      residenceCardInfoType: map['residenceCardInfoType']?.toString(),
+      driversLicenseTypes:
+          (map['driversLicenseTypes'] as List<dynamic>?)?.cast<String>(),
+      driversLicenseConditions:
+          (map['driversLicenseConditions'] as List<dynamic>?)?.cast<String>(),
+      driversLicenseAcquisitionDates:
+          (map['driversLicenseAcquisitionDates'] as List<dynamic>?)?.cast<String>(),
+      residenceCardComprehensivePermission:
+          map['residenceCardComprehensivePermission']?.toString(),
+      residenceCardIndividualPermission:
+          map['residenceCardIndividualPermission']?.toString(),
     );
   }
 
@@ -341,6 +384,14 @@ class LiquidChipDataModel {
   }
   String? get displaySex => sex?.name.toUpperCase();
   String? get displayIdNumber => idNumber;
+
+  /// 個人番号 ditampilkan hanya 4 digit terakhir
+  String? get displayMyNumber {
+    final value = myNumber;
+    if (value == null || value.isEmpty) return null;
+    if (value.length <= 4) return '*******${value.substring(value.length - 4)}';
+    return '*******${value.substring(value.length - 4)}';
+  }
 }
 
 extension ChipVerificationResultDebug on ChipVerificationResult {
@@ -368,16 +419,31 @@ extension ChipVerificationResultDebug on ChipVerificationResult {
 class AutoVerificationResult {
   final AutoVerificationResultStatus result;
   final String? message;
+  final String? faceResult;
+  final int? faceScore;
+  final String? photoResult;
+  final int? photoScore;
+  final bool? passiveResult;
 
   AutoVerificationResult({
     required this.result,
     this.message,
+    this.faceResult,
+    this.faceScore,
+    this.photoResult,
+    this.photoScore,
+    this.passiveResult,
   });
 
   factory AutoVerificationResult.fromMap(Map<String, dynamic>? map) {
     return AutoVerificationResult(
       result: AutoVerificationResultStatus.fromString(map?['result']),
       message: map?['message'] as String?,
+      faceResult: map?['faceResult'] as String?,
+      faceScore: (map?['faceScore'] as num?)?.toInt(),
+      photoResult: map?['photoResult'] as String?,
+      photoScore: (map?['photoScore'] as num?)?.toInt(),
+      passiveResult: map?['passiveResult'] as bool?,
     );
   }
 }
@@ -497,6 +563,12 @@ class OcrResult {
   final String? permittedDate;
   final String? kindOfPermission;
   final List<String>? driversLicenseTypes;
+  // Gen-2 / Specified Residence Card fields (SDK)
+  final String? cardType;
+  final String? residentStatusCode;
+  final String? kindOfPermissionCode;
+  final String? employmentRestrictionCode;
+  final String? nationalityCode3;
 
   OcrResult({
     this.name,
@@ -522,34 +594,71 @@ class OcrResult {
     this.permittedDate,
     this.kindOfPermission,
     this.driversLicenseTypes,
+    this.cardType,
+    this.residentStatusCode,
+    this.kindOfPermissionCode,
+    this.employmentRestrictionCode,
+    this.nationalityCode3,
   });
 
   factory OcrResult.fromMap(Map<String, dynamic>? map) {
-    return OcrResult(
-      name: map?['name'] as String?,
-      birthday: (map?['birthday'] ?? map?['dateOfBirth']) as String?,
-      sex: map?['sex'] as String?,
-      address: map?['address'] as String?,
-      addressPref: map?['addressPref'] as String?,
-      addressCity: map?['addressCity'] as String?,
-      addressOther: map?['addressOther'] as String?,
-      zipCode: map?['zipCode'] as String?,
-      expireDate: (map?['expireDate'] ?? map?['expiryDate']) as String?,
-      idNumber: (map?['idNumber'] ?? map?['documentNumber']) as String?,
-      issueDate: map?['issueDate'] as String?,
-      nationality: map?['nationality'] as String?,
-      residentStatus: (map?['residentStatus'] ?? map?['residenceStatus']) as String?,
-      stayPeriod: (map?['stayPeriod'] ?? map?['periodOfStay']) as String?,
-      stayExpireDate: map?['stayExpireDate'] as String?,
-      issuingAuthority: map?['issuingAuthority'] as String?,
-      addressChanged: map?['addressChanged'] as String?,
-      nameChanged: map?['nameChanged'] as String?,
-      remarksExist: map?['remarksExist'] as String?,
-      employmentRestriction: map?['employmentRestriction'] as String?,
-      permittedDate: map?['permittedDate'] as String?,
-      kindOfPermission: map?['kindOfPermission'] as String?,
-      driversLicenseTypes: (map?['driversLicenseTypes'] as List<dynamic>?)?.cast<String>(),
+    if (map == null) {
+      appLogger.w('[OCR-Parse-SDK] empty/null map');
+      return OcrResult();
+    }
+
+    final result = OcrResult(
+      name: map['name'] as String?,
+      birthday: (map['birthday'] ?? map['dateOfBirth']) as String?,
+      sex: map['sex'] as String?,
+      address: map['address'] as String?,
+      addressPref: map['addressPref'] as String?,
+      addressCity: map['addressCity'] as String?,
+      addressOther: map['addressOther'] as String?,
+      zipCode: map['zipCode'] as String?,
+      expireDate: (map['expireDate'] ?? map['expiryDate']) as String?,
+      idNumber: (map['idNumber'] ?? map['documentNumber']) as String?,
+      issueDate: map['issueDate'] as String?,
+      nationality: map['nationality'] as String?,
+      residentStatus: (map['residentStatus'] ?? map['residenceStatus']) as String?,
+      stayPeriod: (map['stayPeriod'] ?? map['periodOfStay']) as String?,
+      stayExpireDate: map['stayExpireDate'] as String?,
+      issuingAuthority: map['issuingAuthority'] as String?,
+      addressChanged: map['addressChanged'] as String?,
+      nameChanged: map['nameChanged'] as String?,
+      remarksExist: map['remarksExist'] as String?,
+      employmentRestriction: map['employmentRestriction'] as String?,
+      permittedDate: map['permittedDate'] as String?,
+      kindOfPermission: map['kindOfPermission'] as String?,
+      driversLicenseTypes: (map['driversLicenseTypes'] as List<dynamic>?)?.cast<String>(),
+      // Gen-2 fields
+      cardType: map['card_type']?.toString(),
+      residentStatusCode: map['resident_status_code']?.toString(),
+      kindOfPermissionCode: map['kind_of_permission_code']?.toString(),
+      employmentRestrictionCode:
+          map['employment_restriction_code']?.toString(),
+      nationalityCode3: map['nationality_code3']?.toString(),
     );
+
+    appLogger.i(
+      '[OCR-Parse-SDK] '
+      'card_type=${result.cardType ?? "-"} | '
+      'name=${result.name ?? "-"} | '
+      'birthday=${result.birthday ?? "-"} | '
+      'sex=${result.sex ?? "-"} | '
+      'nationality_2=${result.nationality ?? "-"} | '
+      'nationality_3=${result.nationalityCode3 ?? "-"} | '
+      'id_number=${result.idNumber ?? "-"} | '
+      'resident_status=${result.residentStatus ?? "-"} | '
+      'resident_status_code=${result.residentStatusCode ?? "-"} | '
+      'kind_of_permission=${result.kindOfPermissionCode ?? "-"} | '
+      'employment_restriction=${result.employmentRestrictionCode ?? "-"} | '
+      'stay_period=${result.stayPeriod ?? "-"} | '
+      'expire_date=${result.expireDate ?? "-"} | '
+      'address=${result.address != null ? "***MASKED***" : "-"}',
+    );
+
+    return result;
   }
 
   Map<String, dynamic> toMap() {
@@ -585,4 +694,32 @@ class OcrResult {
   String get documentNumber => idNumber ?? '';
   String get residenceStatus => residentStatus ?? '';
   String get periodOfStay => stayPeriod ?? '';
+}
+
+// ============================================================================
+// Extension on OcrResult (SDK model) — Romaji (latin) versions
+// ============================================================================
+extension OcrResultMapping on OcrResult {
+  String? get nameRomaji => JapaneseRomajiHelper.toTitleCaseRomajiSync(name);
+  Future<String?> get nameRomajiAsync =>
+      JapaneseRomajiHelper.toTitleCaseRomajiAsync(name);
+  String? get addressRomaji => JapaneseRomajiHelper.toRomajiSync(address);
+  Future<String?> get addressRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(address);
+  String? get addressPrefRomaji => JapaneseRomajiHelper.toRomajiSync(addressPref);
+  Future<String?> get addressPrefRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(addressPref);
+  String? get addressCityRomaji => JapaneseRomajiHelper.toRomajiSync(addressCity);
+  Future<String?> get addressCityRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(addressCity);
+  String? get addressOtherRomaji => JapaneseRomajiHelper.toRomajiSync(addressOther);
+  Future<String?> get addressOtherRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(addressOther);
+  String? get nationalityRomaji => JapaneseRomajiHelper.toRomajiSync(nationality);
+  Future<String?> get nationalityRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(nationality);
+  String? get residentStatusRomaji =>
+      JapaneseRomajiHelper.toTitleCaseRomajiSync(residentStatus);
+  Future<String?> get residentStatusRomajiAsync =>
+      JapaneseRomajiHelper.toTitleCaseRomajiAsync(residentStatus);
 }

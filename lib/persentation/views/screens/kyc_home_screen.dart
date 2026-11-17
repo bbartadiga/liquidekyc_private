@@ -7,8 +7,6 @@ import '../../../data/services/kyc_be_api.dart';
 import '../../../data/services/kyc_queue_worker.dart';
 import '../../viewmodels/kyc_viewmodel.dart';
 import '../widgets/kyc_loading_overlay.dart';
-import 'kyc_config_screen.dart';
-import 'kyc_instruction_screen.dart';
 import 'kyc_result_screen.dart';
 
 class KycHomeScreen extends StatefulWidget {
@@ -45,11 +43,6 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
             icon: const Icon(Icons.visibility),
             onPressed: () => _navigateToTestResult(context),
             tooltip: 'Test Result Screen',
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => _navigateToConfig(context),
-            tooltip: 'Pengaturan',
           ),
         ],
       ),
@@ -325,19 +318,6 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     );
   }
 
-  void _navigateToConfig(BuildContext context) {
-    final viewModel = context.read<KycViewModel>();
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChangeNotifierProvider.value(
-          value: viewModel,
-          child: const KycConfigScreen(),
-        ),
-      ),
-    );
-  }
-
   void _navigateToTestResult(BuildContext context) async {
     final applicantId = _applicantIdController.text.trim();
     if (applicantId.isEmpty) {
@@ -366,7 +346,7 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
           isSuccess: true,
           beICCardInfo: icCardInfo,
           pendingQueueCount: pendingCount,
-          onDone: () => Navigator.of(ctx).pop(),
+          onDone: () => Navigator.of(ctx).popUntil((route) => route.isFirst),
         ),
       ),
     );

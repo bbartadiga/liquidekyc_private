@@ -2,287 +2,174 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constant/liquid_constants.dart';
 import '../../viewmodels/kyc_viewmodel.dart';
+import 'kyc_home_screen.dart';
 
-class KycConfigScreen extends StatelessWidget {
+class KycConfigScreen extends StatefulWidget {
   const KycConfigScreen({super.key});
 
   @override
+  State<KycConfigScreen> createState() => _KycConfigScreenState();
+}
+
+class _KycConfigScreenState extends State<KycConfigScreen> {
+  Nationality _nationality = Nationality.indonesia;
+  LiquidDocumentType? _docType;
+
+  @override
+  void initState() {
+    super.initState();
+    _docType = _nationality.allowedDocuments.first;
+  }
+
+  void _onNationalityChanged(Nationality? value) {
+    if (value == null || value == _nationality) return;
+    setState(() {
+      _nationality = value;
+      _docType = value.allowedDocuments.first;
+    });
+  }
+
+  void _onSubmit() {
+    if (_docType == null) return;
+    final viewModel = context.read<KycViewModel>();
+    viewModel.setNationality(_nationality);
+    viewModel.setVerificationMethod(VerificationMethod.complyHe);
+    viewModel.setDocumentType(_docType!);
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => KycHomeScreen()),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pengaturan Verifikasi'),
-        backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+        backgroundColor: theme.colorScheme.primaryContainer,
       ),
-      body: Consumer<KycViewModel>(
-        builder: (context, viewModel, child) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildDocumentTypeSection(context, viewModel),
-                const SizedBox(height: 16),
-                _buildFaceTypeSection(context, viewModel),
-                const SizedBox(height: 16),
-                _buildVerificationMethodSection(context, viewModel),
-                const SizedBox(height: 24),
-                _buildInfoCard(context, viewModel),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildDocumentTypeSection(BuildContext context, KycViewModel viewModel) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.credit_card, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Jenis Dokumen IC',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Card(
+                elevation: 1,
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pilih Dokumen',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            ...LiquidDocumentType.values.where((t) =>
-                t == LiquidDocumentType.residenceCard ||
-                t == LiquidDocumentType.driverLicense ||
-                t == LiquidDocumentType.specialPermanentResidentCertificate
-            ).map((docType) => _buildRadioOption(
-                  context,
-                  title: docType.displayName,
-                  subtitle: _getDocumentDescription(docType),
-                  isSelected: viewModel.selectedDocumentType == docType,
-                  onTap: () => viewModel.setDocumentType(docType),
-                )),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFaceTypeSection(BuildContext context, KycViewModel viewModel) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.face, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Tipe Verifikasi Wajah',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
+                      const SizedBox(height: 4),
+                      Text(
+                        'Sesuaikan dengan kewarganegaraan Anda',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: Colors.grey.shade600,
+                        ),
                       ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildRadioOption(
-              context,
-              title: 'Active Detection',
-              subtitle: 'Gerakkan mulut dan nyalakan flash',
-              icon: Icons.motion_photos_on,
-              isSelected: viewModel.selectedFaceType == FaceVerificationType.active,
-              onTap: () => viewModel.setFaceType(FaceVerificationType.active),
-            ),
-            const SizedBox(height: 8),
-            _buildRadioOption(
-              context,
-              title: 'Passive Detection',
-              subtitle: 'Tidak perlu aksi khusus',
-              icon: Icons.face_retouching_natural,
-              isSelected: viewModel.selectedFaceType == FaceVerificationType.passive,
-              onTap: () => viewModel.setFaceType(FaceVerificationType.passive),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+                      const SizedBox(height: 20),
 
-  Widget _buildVerificationMethodSection(BuildContext context, KycViewModel viewModel) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.account_tree, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Metode Verifikasi',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
+                      Text(
+                        'Kewarganegaraan',
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildRadioOption(
-              context,
-              title: 'COMPLY_HE (Recommended)',
-              subtitle: 'IC Card → OCR → Face',
-              isSelected: viewModel.selectedMethod == VerificationMethod.complyHe,
-              onTap: () => viewModel.setVerificationMethod(VerificationMethod.complyHe),
-            ),
-            const SizedBox(height: 8),
-            _buildRadioOption(
-              context,
-              title: 'COMPLY_HO',
-              subtitle: 'Document → Face',
-              isSelected: viewModel.selectedMethod == VerificationMethod.complyHo,
-              onTap: () => viewModel.setVerificationMethod(VerificationMethod.complyHo),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<Nationality>(
+                        initialValue: _nationality,
+                        isExpanded: true,
+                        decoration: _dropdownDecoration(theme),
+                        items: Nationality.values
+                            .map((n) => DropdownMenuItem<Nationality>(
+                                  value: n,
+                                  child: Text(n.displayName),
+                                ))
+                            .toList(),
+                        onChanged: _onNationalityChanged,
+                      ),
+                      const SizedBox(height: 16),
 
-  Widget _buildRadioOption(
-    BuildContext context, {
-    required String title,
-    required String subtitle,
-    IconData? icon,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey.shade300,
-            width: isSelected ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(8),
-          color: isSelected ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3) : null,
-        ),
-        child: Row(
-          children: [
-            if (icon != null) ...[
-              Icon(
-                icon,
-                color: isSelected ? Theme.of(context).colorScheme.primary : Colors.grey,
-                size: 28,
-              ),
-              const SizedBox(width: 12),
-            ],
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                      fontSize: 14,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isSelected)
-              Icon(
-                Icons.check_circle,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
+                      Text(
+                        'Tipe Dokumen',
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<LiquidDocumentType>(
+                        initialValue: _docType,
+                        isExpanded: true,
+                        decoration: _dropdownDecoration(theme),
+                        items: _nationality.allowedDocuments
+                            .map((d) => DropdownMenuItem<LiquidDocumentType>(
+                                  value: d,
+                                  child: Text(d.displayName),
+                                ))
+                            .toList(),
+                        onChanged: (value) =>
+                            setState(() => _docType = value),
+                      ),
+                      const SizedBox(height: 24),
 
-  Widget _buildInfoCard(BuildContext context, KycViewModel viewModel) {
-    return Card(
-      color: Colors.blue.shade50,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.blue.shade700),
-                const SizedBox(width: 8),
-                Text(
-                  'Konfigurasi Saat Ini',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade700,
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _docType == null ? null : _onSubmit,
+                          style: ElevatedButton.styleFrom(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                            backgroundColor: theme.colorScheme.primary,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text(
+                            'Submit',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
-            const SizedBox(height: 8),
-            _buildInfoRow('Dokumen', viewModel.selectedDocumentType.displayName),
-            _buildInfoRow('Metode', viewModel.selectedMethod.displayName),
-            _buildInfoRow('Face', viewModel.selectedFaceType == FaceVerificationType.active ? 'Active' : 'Passive'),
-            _buildInfoRow('Token', viewModel.hasDynamicCredentials ? 'Sudah ada' : 'Belum di-fetch'),
-            _buildInfoRow('NFC', viewModel.nfcAvailable ? 'Tersedia' : 'Tidak tersedia'),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 80,
-            child: Text(
-              '$label:',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 12),
-          ),
-        ],
+  InputDecoration _dropdownDecoration(ThemeData theme) {
+    return InputDecoration(
+      filled: true,
+      fillColor: Colors.grey.shade50,
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 12,
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: Colors.grey.shade300),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(8),
+        borderSide: BorderSide(color: theme.colorScheme.primary, width: 1.5),
       ),
     );
-  }
-
-  String _getDocumentDescription(LiquidDocumentType docType) {
-    switch (docType) {
-      case LiquidDocumentType.residenceCard:
-        return 'Kartu Izin Tinggal (Residence Card)';
-      case LiquidDocumentType.specialPermanentResidentCertificate:
-        return 'Sertifikat Penduduk Tetap Khusus';
-      case LiquidDocumentType.driverLicense:
-        return 'Surat Izin Mengemudi (SIM)';
-      default:
-        return 'Dokumen IC';
-    }
   }
 }

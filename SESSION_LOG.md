@@ -1,6 +1,6 @@
 # 📝 eKYC Flutter Project - Chat Session Log
 
-**Tanggal:** 10 Juni 2025
+**Tanggal:** 10 oktober 2026
 **Project:** POC Liquid eKYC Flutter App  
 **Status:** ✅ POC Selesai & Siap Testing
 
@@ -214,6 +214,18 @@ android/app/src/main/kotlin/.../
 
 ---
 
-**Session End: 10 Juni 2025**  
-**Project Status: ✅ POC Complete**  
+**Session End: 10 Juni 2025**
+**Project Status: ✅ POC Complete**
 **Next: Waiting for Backend team untuk production integration**
+
+---
+
+## 📂 Session History (Detail Per-Tanggal)
+
+Detail per-session lengkap ada di folder `sessions/`:
+
+| Tanggal | File | Scope |
+|---------|------|-------|
+| 6 Nov 2026 | [`sessions/2026-11-06-comply-he-3docs-ui-redesign.md`](sessions/2026-11-06-comply-he-3docs-ui-redesign.md) | COMPLY_HE 3-document logic fix, nationality-dropdown flow, Config → home, auto-detect nationality/doc type from BE/SDK + cascading fallback ke user config |
+
+Untuk log historis lengkap beberapa session sebelumnya, lihat masing-masing file di `sessions/`.

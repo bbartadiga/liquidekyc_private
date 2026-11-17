@@ -1,4 +1,4 @@
-package com.example.poc_liquidekyc_flutter.plugins
+package id.co.bni.mobile_remittance_kcln_tokyo.liquid_ekyc
 
 import android.content.Context
 import android.os.Handler
@@ -13,6 +13,7 @@ import asia.liquidinc.ekyc.applicant.core.function.VerifyIdDocument
 import asia.liquidinc.ekyc.applicant.core.function.VerifyIdChip
 import asia.liquidinc.ekyc.applicant.core.function.VerifyFace
 import asia.liquidinc.ekyc.applicant.external.TermsOfUseSettings
+import asia.liquidinc.ekyc.applicant.external.LiquidDocumentType
 import asia.liquidinc.ekyc.applicant.external.VerifyIdDocumentParameters
 import asia.liquidinc.ekyc.applicant.external.VerifyIdChipParameters
 import asia.liquidinc.ekyc.applicant.external.VerifyFaceParameters
@@ -41,6 +42,7 @@ object SdkManager {
     var pendingResult: Result? = null
     var pendingLaunchType: String? = null
     var pendingLaunchParams: Any? = null
+    var pendingRequestedDocumentType: LiquidDocumentType? = null
     
     val handler = Handler(Looper.getMainLooper())
     
@@ -74,6 +76,7 @@ object SdkManager {
         pendingResult = null
         pendingLaunchType = null
         pendingLaunchParams = null
+        pendingRequestedDocumentType = null
     }
     
     fun log(msg: String) {
@@ -136,12 +139,31 @@ object SdkManager {
                 log("VerifyIdChip callback: ${data.resultStatus?.name}")
                 handler.post {
                     pendingResult?.let { result ->
-                        result.success(mapOf(
+                        val payload = mutableMapOf<String, Any?>(
                             "resultStatus" to (data.resultStatus?.name ?: "UNKNOWN"),
                             "errorCode" to data.errorCode,
                             "additionalDataTitle" to (data.additionalDataTitle ?: ""),
                             "additionalDataMessage" to (data.additionalDataMessage ?: "")
-                        ))
+                        )
+
+                        val actualDocType = data.liquidChipData?.liquidDocumentType
+                        actualDocType?.let { payload["liquidDocumentType"] = it.name }
+                        VerificationHandler.buildChipDataMap(data)?.let { payload["liquidChipData"] = it }
+                        VerificationHandler.buildAutoVerificationMap(data)?.let { payload["autoVerificationResult"] = it }
+
+                        val requested = pendingRequestedDocumentType
+                        if (requested != null && actualDocType != null) {
+                            val compatible = VerificationHandler.isActualDocumentTypeCompatible(requested, actualDocType)
+                            payload["documentTypeMismatch"] = !compatible
+                            if (compatible) {
+                                log("VerifyIdChip doc OK: requested=$requested actual=${actualDocType.name}")
+                            } else {
+                                log("MISMATCH VerifyIdChip: requested=$requested actual=${actualDocType.name}")
+                            }
+                        }
+                        pendingRequestedDocumentType = null
+
+                        result.success(payload)
                         pendingResult = null
                     }
                 }

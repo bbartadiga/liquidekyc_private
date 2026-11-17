@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../../core/constant/liquid_mappings.dart';
 import '../../../data/models/kyc_result.dart';
 import '../../../data/models/document_result.dart';
 import '../../../data/models/face_results.dart';
 import '../../../data/models/chip_result.dart';
 import '../../../data/services/kyc_be_api.dart';
 import '../../../core/services/app_logger.dart';
+import '../../viewmodels/kyc_viewmodel.dart';
 
 export '../../../data/models/chip_result.dart';
 export '../../../data/models/face_results.dart';
@@ -387,6 +390,257 @@ class _KycResultScreenState extends State<KycResultScreen> {
     );
   }
 
+  Widget _buildIdentityCard() {
+    final viewModel = context.read<KycViewModel>();
+    final beOcr = widget.beOcrResults;
+    final sdkOcr = viewModel.ocrResult;
+
+    String? nationalityName;
+    String? nationalityCode;
+    String? documentTypeName;
+    String? documentTypeCode;
+    String? cardType;
+    String sourceTag;
+
+    if (_showSdkData) {
+      // SDK tab: nationality from SDK ocrResult, doc type from user-selected config
+      nationalityName = resolveNationalityName(sdkOcr?.nationality)
+          ?? viewModel.selectedNationality.displayName;
+      nationalityCode = (sdkOcr?.nationality?.toUpperCase())
+          ?? viewModel.selectedNationality.name.toUpperCase();
+      documentTypeName = viewModel.selectedDocumentType.displayName;
+      documentTypeCode = viewModel.selectedDocumentType.value;
+      // card_type tidak ada di OCR SDK — sumbernya chip data
+      cardType = viewModel.chipVerificationResult?.chipData?.residenceCardType
+          ?? sdkOcr?.cardType;
+      sourceTag = 'SDK + Config';
+    } else {
+      // BE tab: both from BE, fallback to user-selected config
+      nationalityName = resolveNationalityName(beOcr?.nationality)
+          ?? viewModel.selectedNationality.displayName;
+      nationalityCode = (beOcr?.nationality?.toUpperCase())
+          ?? viewModel.selectedNationality.name.toUpperCase();
+      documentTypeName = resolveDocumentTypeName(beOcr?.idDocumentType)
+          ?? viewModel.selectedDocumentType.displayName;
+      documentTypeCode = beOcr?.idDocumentType
+          ?? viewModel.selectedDocumentType.value;
+      cardType = beOcr?.cardType;
+      sourceTag = 'BE + Config';
+    }
+
+    // Detect Gen-2 / Specified → tampilkan chip badge di header
+    final cardTypeName = resolveResidenceCardTypeName(cardType);
+    final isGen2Plus = cardType != null && ['5','6','7','8'].contains(cardType);
+
+    // Dokumen yang benar-benar dibaca dari chip vs yang diminta user
+    final actualDocType = viewModel.actualDocumentType;
+    final hasMismatch = viewModel.isDocumentTypeMismatch;
+
+    appLogger.i('[IdentityCard] render | tab=${_showSdkData ? "SDK" : "BE"} | source=$sourceTag | nationality="$nationalityName"($nationalityCode) | document="$documentTypeName"($documentTypeCode) | actual=${actualDocType?.value ?? "-"} | mismatch=$hasMismatch | card_type=$cardType');
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.primaryContainer,
+            Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.6),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Identitas Dokumen',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              const Spacer(),
+              if (hasMismatch)
+                Container(
+                  margin: const EdgeInsets.only(right: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'DOC MISMATCH',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.red.shade700,
+                    ),
+                  ),
+                ),
+              if (isGen2Plus)
+                Container(
+                  margin: const EdgeInsets.only(right: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'GEN-2',
+                    style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.deepPurple.shade700,
+                    ),
+                  ),
+                ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade100,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  sourceTag,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (cardTypeName != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: isGen2Plus
+                    ? Colors.deepPurple.shade50
+                    : Colors.blueGrey.shade50,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(
+                  color: isGen2Plus
+                      ? Colors.deepPurple.shade200
+                      : Colors.blueGrey.shade300,
+                ),
+              ),
+              child: Text(
+                'Card: $cardTypeName (code $cardType)',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isGen2Plus
+                      ? Colors.deepPurple.shade800
+                      : Colors.blueGrey.shade700,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+          if (hasMismatch && actualDocType != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.red.shade300),
+              ),
+              child: Text(
+                'Kartu dibaca: ${actualDocType.displayName} '
+                '(${actualDocType.value}) — bukan ${viewModel.selectedDocumentType.displayName}',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.red.shade800,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildIdentityField(
+                  context,
+                  label: 'Nationality',
+                  value: nationalityName ?? '-',
+                  code: nationalityCode,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildIdentityField(
+                  context,
+                  label: 'Jenis Dokumen',
+                  value: documentTypeName ?? '-',
+                  code: documentTypeCode,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdentityField(
+    BuildContext context, {
+    required String label,
+    required String value,
+    String? code,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.black87,
+          ),
+        ),
+        if (code != null && code.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              code,
+              style: TextStyle(
+                fontSize: 10,
+                fontFamily: 'monospace',
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   Widget _buildVerificationResults() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -403,6 +657,11 @@ class _KycResultScreenState extends State<KycResultScreen> {
 
         // Status Summary
         _buildStatusSummary(),
+
+        const SizedBox(height: 16),
+
+        // Identitas Dokumen (auto-detected from BE)
+        _buildIdentityCard(),
 
         const SizedBox(height: 16),
 
@@ -435,6 +694,9 @@ class _KycResultScreenState extends State<KycResultScreen> {
 
           // OCR Data (BE - Official) - SELALU TAMPIL
           _buildOcrBeSection(),
+
+          // Gen-2 / Specified Residence Card section (auto-show kalau cardType terdeteksi)
+          _buildGen2CardSection(),
 
           // IC Chip Section (BE) - SELALU TAMPIL
           _buildChipSection(isSdk: false),
@@ -609,47 +871,464 @@ class _KycResultScreenState extends State<KycResultScreen> {
   }
 
   Widget _buildOcrSdkSection() {
+    final viewModel = context.read<KycViewModel>();
+    final sdkOcr = viewModel.ocrResult;
+    final chipData = viewModel.chipVerificationResult?.chipData;
+    final sdkCardType = resolveResidenceCardTypeName(
+      chipData?.residenceCardType ?? sdkOcr?.cardType,
+    );
+    final cardTypeCode = chipData?.residenceCardType ?? sdkOcr?.cardType;
     return _buildSection(
       title: 'Data Kartu (OCR - SDK Preview)',
       icon: Icons.article,
       color: Colors.blue,
       children: [
-        _buildDetailPlaceholder('Nama', widget.ocrName),
-        _buildDetailPlaceholder('Alamat', widget.ocrAddress, maxLines: 2),
+        _buildDetailWithRomaji(
+          label: 'Nama',
+          original: widget.ocrName,
+          romajiSync: sdkOcr?.nameRomaji,
+          romajiFuture: sdkOcr?.nameRomajiAsync,
+        ),
+        _buildDetailWithRomaji(
+          label: 'Alamat',
+          original: widget.ocrAddress,
+          romajiSync: sdkOcr?.addressRomaji,
+          romajiFuture: sdkOcr?.addressRomajiAsync,
+          maxLines: 2,
+        ),
+        if (sdkOcr != null) ..._buildAddressSplitRowsAsync(
+          sdkOcr!,
+          prefGetter: (o) => o.addressPref,
+          cityGetter: (o) => o.addressCity,
+          otherGetter: (o) => o.addressOther,
+          prefSyncGetter: (o) => o.addressPrefRomaji,
+          citySyncGetter: (o) => o.addressCityRomaji,
+          otherSyncGetter: (o) => o.addressOtherRomaji,
+          prefRomajiFuture: (o) => o.addressPrefRomajiAsync,
+          cityRomajiFuture: (o) => o.addressCityRomajiAsync,
+          otherRomajiFuture: (o) => o.addressOtherRomajiAsync,
+        ),
         _buildDetailPlaceholder('Tanggal Lahir', widget.ocrDateOfBirth),
         _buildDetailPlaceholder('No. Dokumen', widget.ocrDocumentNumber),
         _buildDetailPlaceholder('Nasionalitas', widget.ocrNationality),
-        _buildDetailPlaceholder('Residence Status', widget.ocrResidenceStatus),
+        if (chipData?.displayMyNumber != null)
+          _buildDetailPlaceholder('No. My Number', chipData!.displayMyNumber),
+        _buildDetailWithRomaji(
+          label: 'Residence Status',
+          original: widget.ocrResidenceStatus,
+          romajiSync: sdkOcr?.residentStatusRomaji,
+          romajiFuture: sdkOcr?.residentStatusRomajiAsync,
+        ),
+        ..._buildChangeDetectionRows(
+          addressChanged: sdkOcr?.addressChanged,
+          nameChanged: sdkOcr?.nameChanged,
+          remarksExist: sdkOcr?.remarksExist,
+        ),
+        if (_buildLicenseTypeRow(sdkOcr?.driversLicenseTypes) != null)
+          _buildLicenseTypeRow(sdkOcr?.driversLicenseTypes)!,
+        if (sdkCardType != null)
+          _buildDetailPlaceholder('Card Type', '$sdkCardType ($cardTypeCode)'),
         const Divider(height: 8),
         _buildSourceTag('SDK - Preview (Fast)'),
       ],
     );
   }
 
-  Widget _buildOcrBeSection() {
+Widget _buildOcrBeSection() {
     final ocr = widget.beOcrResults;
+    final ic = widget.beICCardInfo;
+    final cardTypeName = resolveResidenceCardTypeName(ocr?.cardType);
+    final empRestr = resolveEmploymentRestrictionName(ocr?.employmentRestrictionCode);
+
+    final children = <Widget>[
+      _buildDetailWithRomaji(
+        label: 'Nama',
+        original: ocr?.name,
+        romajiSync: ic?.nameRomaji ?? ocr?.nameRomaji,
+        romajiFuture: ic?.nameKanjiRomajiAsync ?? ocr?.nameRomajiAsync,
+      ),
+      _buildDetailPlaceholder('Jenis Kelamin', ocr?.sex != null ? _formatSex(ocr!.sex!) : null),
+      _buildDetailPlaceholder('Tanggal Lahir', ocr?.birthday),
+      _buildDetailPlaceholder('No. Dokumen', ocr?.idNumber),
+      if (_maskMyNumber(ocr?.myNumber) != null)
+        _buildDetailPlaceholder('No. My Number', _maskMyNumber(ocr?.myNumber)),
+      _buildDetailWithRomaji(
+        label: 'Alamat',
+        original: ocr?.address,
+        romajiSync: ic?.addressRomaji ?? ocr?.addressRomaji,
+        romajiFuture: ic?.addressRomajiAsync ?? ocr?.addressRomajiAsync,
+        maxLines: 2,
+      ),
+      _buildDetailWithRomaji(
+        label: 'Alamat Lengkap',
+        original: ocr?.fullAddress,
+        romajiSync: (ic != null)
+            ? ([ic.addressPrefRomaji, ic.addressCityRomaji, ic.addressOtherRomaji]
+                .where((s) => s != null && s.isNotEmpty)
+                .join(' '))
+            : null,
+        romajiFuture: (ic != null)
+            ? _joinAddressFuture(ic.addressPrefRomajiAsync, ic.addressCityRomajiAsync, ic.addressOtherRomajiAsync)
+            : null,
+        maxLines: 2,
+      ),
+      ..._buildAddressSplitRowsWithRomajiAndAsync(
+        prefOriginal: ocr?.addressPref,
+        prefRomajiSync: ic?.addressPrefRomaji,
+        prefRomajiFuture: ic?.addressPrefRomajiAsync,
+        cityOriginal: ocr?.addressCity,
+        cityRomajiSync: ic?.addressCityRomaji,
+        cityRomajiFuture: ic?.addressCityRomajiAsync,
+        otherOriginal: ocr?.addressOther,
+        otherRomajiSync: ic?.addressOtherRomaji,
+        otherRomajiFuture: ic?.addressOtherRomajiAsync,
+      ),
+      _buildDetailPlaceholder('Zip Code', ocr?.zipCode),
+      _buildDetailPlaceholder('Dokumen', ocr?.documentTypeDisplay),
+      if (cardTypeName != null)
+        _buildDetailPlaceholder('Card Type', '$cardTypeName (${ocr?.cardType})'),
+      _buildDetailPlaceholder('Nasionalitas', ocr?.nationalityDisplay),
+      if (ocr?.nationalityCode3 != null)
+        _buildDetailPlaceholder('Nasionalitas (3-letter)',
+            '${resolveNationalityName3(ocr!.nationalityCode3) ?? "-"} (${ocr.nationalityCode3})'),
+      _buildDetailPlaceholder('Tgl Kadaluarsa', ocr?.expireDate != null ? _formatDate(ocr!.expireDate!) : null),
+      _buildDetailPlaceholder('Tgl Terbit', ocr?.issueDate != null ? _formatDate(ocr!.issueDate!) : null),
+      _buildDetailPlaceholder('Residence Status Code', ocr?.residentStatusCode),
+      _buildDetailWithRomaji(
+        label: 'Residence Status',
+        original: ocr?.residentStatus,
+        romajiSync: ocr?.residentStatusRomaji,
+        romajiFuture: ocr?.residentStatusRomajiAsync,
+      ),
+      _buildStayPeriodDisplay(ocr?.stayPeriod),
+      if (empRestr != null) _buildDetailPlaceholder('Employment Restriction', '$empRestr (${ocr?.employmentRestrictionCode})'),
+      ..._buildChangeDetectionRows(
+        addressChanged: ocr?.addressChanged,
+        nameChanged: ocr?.nameChanged,
+        remarksExist: ocr?.remarksExist,
+      ),
+      if (_buildLicenseTypeRow(ocr?.driversLicenseTypes) != null)
+        _buildLicenseTypeRow(ocr?.driversLicenseTypes)!,
+      _buildDetailPlaceholder('Stay Expire', ocr?.stayExpireDate != null ? _formatDate(ocr!.stayExpireDate!) : null),
+      const Divider(height: 8),
+      _buildSourceTag('BE - Official (Validated)'),
+    ];
+
     return _buildSection(
       title: 'Data Kartu (BE Official)',
       icon: Icons.verified_user,
       color: Colors.green,
+      children: children,
+    );
+  }
+
+  // Gen-2 / Specified Residence — tampilkan saat cardType terdeteksi
+  Widget _buildGen2CardSection() {
+    final ocr = widget.beOcrResults;
+    final ic = widget.beICCardInfo;
+    final ocrCardType = ocr?.cardType;
+    final icCardType = ic?.cardType;
+    final cardType = ocrCardType ?? icCardType;
+    if (cardType == null) return const SizedBox.shrink();
+
+    final cardName = resolveResidenceCardTypeName(cardType) ?? 'Unknown';
+    final isGen2Plus = ['5','6','7','8'].contains(cardType);
+
+    return _buildSection(
+      title: 'Gen-2 Residence Info',
+      icon: Icons.contact_emergency,
+      color: isGen2Plus ? Colors.deepPurple : Colors.blueGrey,
       children: [
-        _buildDetailPlaceholder('Nama', ocr?.name),
-        _buildDetailPlaceholder('Jenis Kelamin', ocr?.sex != null ? _formatSex(ocr!.sex!) : null),
-        _buildDetailPlaceholder('Tanggal Lahir', ocr?.birthday),
-        _buildDetailPlaceholder('No. Dokumen', ocr?.idNumber),
-        _buildDetailPlaceholder('Alamat', ocr?.address, maxLines: 2),
-        _buildDetailPlaceholder('Alamat Lengkap', ocr?.fullAddress, maxLines: 2),
-        _buildDetailPlaceholder('Zip Code', ocr?.zipCode),
-        _buildDetailPlaceholder('Nasionalitas', ocr?.nationality),
-        _buildDetailPlaceholder('Tgl Kadaluarsa', ocr?.expireDate != null ? _formatDate(ocr!.expireDate!) : null),
-        _buildDetailPlaceholder('Tgl Terbit', ocr?.issueDate != null ? _formatDate(ocr!.issueDate!) : null),
-        _buildDetailPlaceholder('Residence Status', ocr?.residentStatus),
-        _buildDetailPlaceholder('Stay Period', ocr?.stayPeriod),
-        _buildDetailPlaceholder('Stay Expire', ocr?.stayExpireDate != null ? _formatDate(ocr!.stayExpireDate!) : null),
+        _buildDetailPlaceholder('Card Type', '$cardName ($cardType)'),
+        _buildDetailPlaceholder(' Nama (IC)', ic?.name),
+        _buildDetailPlaceholder('Alamat (IC)', ic?.address, maxLines: 2),
+        _buildDetailPlaceholder(' Nama (BE)', ocr?.name),
+        _buildDetailPlaceholder('Alamat (BE)', ocr?.address, maxLines: 2),
+        if (ocr?.residentStatusCode != null || ic?.residentStatusCode != null)
+          _buildDetailPlaceholder('Resident Status (Code)',
+              ocr?.residentStatusCode ?? ic?.residentStatusCode),
+        if (ocr?.kindOfPermissionCode != null || ic?.kindOfPermissionCode != null)
+          _buildDetailPlaceholder('Permission Type (Code)',
+              ocr?.kindOfPermissionCode ?? ic?.kindOfPermissionCode),
+        if (ocr?.employmentRestrictionCode != null || ic?.employmentRestrictionCode != null) ...[
+          _buildDetailPlaceholder(' Employment Restriction', '${ocr?.employmentRestrictionCode ?? ic?.employmentRestrictionCode}'),
+        ],
+        if (ocr?.nationalityCode3 != null || ic?.nationalityCode3 != null)
+          _buildDetailPlaceholder('Nationality (3-letter)', ocr?.nationalityCode3 ?? ic?.nationalityCode3),
+        _buildDetailPlaceholder('Stay Period (Year)', ic?.stayPeriodYear?.toString()),
+        _buildDetailPlaceholder('Stay Period (Month)', ic?.stayPeriodMonth?.toString()),
+        _buildDetailPlaceholder('Stay Period (Day)', ic?.stayPeriodDay?.toString()),
         const Divider(height: 8),
-        _buildSourceTag('BE - Official (Validated)'),
+        _buildSourceTag(isGen2Plus ? 'Gen-2 Era (2026+)' : 'Current Gen'),
       ],
     );
+  }
+
+  // Stay Period display — split format kalau year/month/day tersedia, fallback ke plain string
+  Widget _buildStayPeriodDisplay(String? rawStayPeriod) {
+    final ic = widget.beICCardInfo;
+    final hasSplit = ic?.stayPeriodYear != null ||
+        ic?.stayPeriodMonth != null ||
+        ic?.stayPeriodDay != null;
+    if (!hasSplit && rawStayPeriod == null) {
+      return _buildDetailPlaceholder('Stay Period', null);
+    }
+    if (!hasSplit) {
+      return _buildDetailPlaceholder('Stay Period', rawStayPeriod);
+    }
+    // hasSplit == true → ic tidak null (sudah dicheck di atas)
+    final y = ic!.stayPeriodYear?.toString() ?? '?';
+    final m = ic.stayPeriodMonth?.toString() ?? '?';
+    final d = ic.stayPeriodDay?.toString() ?? '?';
+    final pretty = '${y} tahun ${m} bulan ${d} hari';
+    return _buildDetailPlaceholder('Stay Period', pretty);
+  }
+
+  // Address split (prefecture / city / other) — tampil kalau ada datanya
+  List<Widget> _buildAddressSplitRows({
+    String? pref,
+    String? city,
+    String? other,
+  }) {
+    final rows = <Widget>[];
+    if (pref != null && pref.isNotEmpty) {
+      rows.add(_buildDetailPlaceholder('Prefecture', pref));
+    }
+    if (city != null && city.isNotEmpty) {
+      rows.add(_buildDetailPlaceholder('City / Municipality', city));
+    }
+    if (other != null && other.isNotEmpty) {
+      rows.add(_buildDetailPlaceholder('Address (Rest)', other));
+    }
+    return rows;
+  }
+
+  // Address split (sync-only) — when caller only has sync romaji (e.g. kana fields)
+  List<Widget> _buildAddressSplitRowsWithRomaji({
+    String? prefOriginal,
+    String? prefRomaji,
+    String? cityOriginal,
+    String? cityRomaji,
+    String? otherOriginal,
+    String? otherRomaji,
+  }) {
+    return _buildAddressSplitRowsWithRomajiAndAsync(
+      prefOriginal: prefOriginal,
+      prefRomajiSync: prefRomaji,
+      cityOriginal: cityOriginal,
+      cityRomajiSync: cityRomaji,
+      otherOriginal: otherOriginal,
+      otherRomajiSync: otherRomaji,
+    );
+  }
+
+  // Address split dengan sync + async romaji — optimal path untuk pure kanji
+  List<Widget> _buildAddressSplitRowsWithRomajiAndAsync({
+    String? prefOriginal,
+    String? prefRomajiSync,
+    Future<String?>? prefRomajiFuture,
+    String? cityOriginal,
+    String? cityRomajiSync,
+    Future<String?>? cityRomajiFuture,
+    String? otherOriginal,
+    String? otherRomajiSync,
+    Future<String?>? otherRomajiFuture,
+  }) {
+    final rows = <Widget>[];
+    if (prefOriginal != null && prefOriginal.isNotEmpty) {
+      rows.add(_buildDetailWithRomaji(
+        label: 'Prefecture',
+        original: prefOriginal,
+        romajiSync: prefRomajiSync,
+        romajiFuture: prefRomajiFuture,
+      ));
+    }
+    if (cityOriginal != null && cityOriginal.isNotEmpty) {
+      rows.add(_buildDetailWithRomaji(
+        label: 'City / Municipality',
+        original: cityOriginal,
+        romajiSync: cityRomajiSync,
+        romajiFuture: cityRomajiFuture,
+      ));
+    }
+    if (otherOriginal != null && otherOriginal.isNotEmpty) {
+      rows.add(_buildDetailWithRomaji(
+        label: 'Address (Rest)',
+        original: otherOriginal,
+        romajiSync: otherRomajiSync,
+        romajiFuture: otherRomajiFuture,
+      ));
+    }
+    return rows;
+  }
+
+  // Generic async address split (SDK OcrResult native getter style)
+  List<Widget> _buildAddressSplitRowsAsync<T>(
+    T source, {
+    required String? Function(T) prefGetter,
+    required String? Function(T) cityGetter,
+    required String? Function(T) otherGetter,
+    required Future<String?>? Function(T) prefRomajiFuture,
+    required Future<String?>? Function(T) cityRomajiFuture,
+    required Future<String?>? Function(T) otherRomajiFuture,
+    String? Function(T)? prefSyncGetter,
+    String? Function(T)? citySyncGetter,
+    String? Function(T)? otherSyncGetter,
+  }) {
+    final pOrig = prefGetter(source);
+    final cOrig = cityGetter(source);
+    final oOrig = otherGetter(source);
+    return _buildAddressSplitRowsWithRomajiAndAsync(
+      prefOriginal: pOrig,
+      prefRomajiSync: prefSyncGetter?.call(source),
+      prefRomajiFuture: prefRomajiFuture(source),
+      cityOriginal: cOrig,
+      cityRomajiSync: citySyncGetter?.call(source),
+      cityRomajiFuture: cityRomajiFuture(source),
+      otherOriginal: oOrig,
+      otherRomajiSync: otherSyncGetter?.call(source),
+      otherRomajiFuture: otherRomajiFuture(source),
+    );
+  }
+
+  // Combine 3 Future<String?> jadi satu Future<String?> yang joined dengan space
+  Future<String?> _joinAddressFuture(
+    Future<String?>? a,
+    Future<String?>? b,
+    Future<String?>? c,
+  ) async {
+    final ra = await a;
+    final rb = await b;
+    final rc = await c;
+    return [ra, rb, rc].where((s) => s != null && s.isNotEmpty).join(' ');
+  }
+
+  // Dual display original kanji/katakana + romaji latin
+  Widget _buildDetailWithRomaji({
+    required String label,
+    String? original,
+    String? romajiSync,
+    Future<String?>? romajiFuture,
+    int maxLines = 1,
+  }) {
+    // Fast path: sync romaji available (instant — kana field / cached)
+    if (romajiSync != null && romajiSync.isNotEmpty && romajiSync != original) {
+      return _renderRomajiPair(label, original, romajiSync, maxLines);
+    }
+    // Async path: FutureBuilder untuk full kanji transliteration
+    if (romajiFuture != null) {
+      return FutureBuilder<String?>(
+        future: romajiFuture,
+        builder: (context, snap) {
+          final r = snap.data;
+          if (r != null && r.isNotEmpty && r != original) {
+            return _renderRomajiPair(label, original, r, maxLines);
+          }
+          return _buildDetailPlaceholder(label, original, maxLines: maxLines);
+        },
+      );
+    }
+    // Plain display kalau no romaji available
+    return _buildDetailPlaceholder(label, original, maxLines: maxLines);
+  }
+
+  Widget _renderRomajiPair(String label, String? original, String romaji, int maxLines) {
+    final isMasked = (original == null || original.isEmpty);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: maxLines > 1 ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 90,
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  original ?? '(kosong)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: isMasked ? Colors.grey.shade400 : Colors.black87,
+                    fontStyle: isMasked ? FontStyle.italic : FontStyle.normal,
+                  ),
+                  maxLines: maxLines,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade50,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text(
+                    romaji,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.indigo.shade700,
+                      fontStyle: FontStyle.italic,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: maxLines,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Address/name change detection + remarks flag
+  List<Widget> _buildChangeDetectionRows({
+    String? addressChanged,
+    String? nameChanged,
+    String? remarksExist,
+  }) {
+    final rows = <Widget>[];
+    // _formatChangeFlag return null kalau ga ada data → placeholder
+    final addrText = _formatChangeFlag(addressChanged, 'Alamat');
+    if (addrText != null) rows.add(_buildDetailPlaceholder(addrText.$1, addrText.$2));
+    final nameText = _formatChangeFlag(nameChanged, 'Nama');
+    if (nameText != null) rows.add(_buildDetailPlaceholder(nameText.$1, nameText.$2));
+    final remarksText = _formatChangeFlag(remarksExist, 'Remarks');
+    if (remarksText != null) rows.add(_buildDetailPlaceholder(remarksText.$1, remarksText.$2));
+    return rows;
+  }
+
+  // Returns (label, value) atau null kalau null/invalid
+  (String, String)? _formatChangeFlag(String? value, String baseLabel) {
+    if (value == null || value.isEmpty) return null;
+    String display;
+    Color? color;
+    switch (value) {
+      case '1':
+        display = 'Baru diubah (red flag)';
+        color = Colors.orange;
+        break;
+      case '0':
+        // No change → skip, ga perlu ditampilkan
+        return null;
+      default:
+        display = value;
+    }
+    return (baseLabel, display);
+  }
+
+  // Driver License types array (utk Driving License case)
+  Widget? _buildLicenseTypeRow(List<String>? types) {
+    if (types == null || types.isEmpty) return null;
+    final display = types.join(' • ');
+    return _buildDetailPlaceholder('Tipe SIM', display);
   }
 
   String _formatDate(String date) {
@@ -657,6 +1336,13 @@ class _KycResultScreenState extends State<KycResultScreen> {
       return '${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}';
     }
     return date;
+  }
+
+  /// 個人番号 hanya tampil 4 digit terakhir
+  String? _maskMyNumber(String? value) {
+    if (value == null || value.isEmpty) return null;
+    if (value.length <= 4) return '*******${value.substring(value.length - 4)}';
+    return '*******${value.substring(value.length - 4)}';
   }
 
   String _formatSex(String sex) {

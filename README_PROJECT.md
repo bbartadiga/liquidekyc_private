@@ -132,7 +132,7 @@ DEBUG_MODE = false
 
 ```bash
 # Navigate ke project
-cd poc_liquidekyc_flutter
+cd module_liquid_ekyc
 
 # Build debug APK
 flutter build apk --debug
@@ -270,7 +270,7 @@ DEBUG_MODE = false
 
 ```bash
 # Navigate to project
-cd poc_liquidekyc_flutter
+cd module_liquid_ekyc
 
 # Build debug APK
 flutter build apk --debug

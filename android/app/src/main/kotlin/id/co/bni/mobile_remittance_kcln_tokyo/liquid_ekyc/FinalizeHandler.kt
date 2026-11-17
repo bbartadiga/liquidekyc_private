@@ -1,4 +1,4 @@
-package com.example.poc_liquidekyc_flutter.plugins
+package id.co.bni.mobile_remittance_kcln_tokyo.liquid_ekyc
 
 import asia.liquidinc.ekyc.applicant.LiquidSdk
 import io.flutter.plugin.common.MethodCall
@@ -153,6 +153,7 @@ object FinalizeHandler {
                             ocr.employmentRestriction?.let { ocrMap["employmentRestriction"] = it }
                             ocr.permittedDate?.let { ocrMap["permittedDate"] = it }
                             ocr.kindOfPermission?.let { ocrMap["kindOfPermission"] = it }
+                            ocr.driversLicenseTypes?.let { ocrMap["driversLicenseTypes"] = it }
 
                             result.success(mapOf(
                                 "status" to ocrResult.resultStatus.name,

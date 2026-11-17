@@ -112,6 +112,7 @@ class KycViewModel extends ChangeNotifier {
   VerificationMethod _selectedMethod = VerificationMethod.defaultMethod;  // COMPLY_HE
   LiquidDocumentType _selectedDocumentType = LiquidDocumentType.defaultType;  // Residence Card
   FaceVerificationType _selectedFaceType = FaceVerificationType.active;
+  Nationality _selectedNationality = Nationality.indonesia;
 
   // Dynamic credentials dari Backend (Production Mode)
   String? _dynamicApplicantId;
@@ -122,6 +123,7 @@ class KycViewModel extends ChangeNotifier {
   VerificationMethod get selectedMethod => _selectedMethod;
   LiquidDocumentType get selectedDocumentType => _selectedDocumentType;
   FaceVerificationType get selectedFaceType => _selectedFaceType;
+  Nationality get selectedNationality => _selectedNationality;
 
   // Getters untuk credentials
   bool get hasDynamicCredentials => _hasDynamicCredentials;
@@ -143,6 +145,47 @@ class KycViewModel extends ChangeNotifier {
 
   void setDocumentType(LiquidDocumentType documentType) {
     _selectedDocumentType = documentType;
+    notifyListeners();
+  }
+
+  /// Dokumen yang benar-benar dibaca dari chip (null kalau SDK tidak mengirim)
+  String? get actualDocumentTypeValue =>
+      _chipVerificationResult?.chipData?.liquidDocumentType;
+
+  LiquidDocumentType? get actualDocumentType {
+    final value = actualDocumentTypeValue;
+    if (value == null || value.isEmpty) return null;
+    return LiquidDocumentType.fromString(value);
+  }
+
+  bool get isDocumentTypeMismatch {
+    final actual = actualDocumentType;
+    if (actual == null) return false;
+    return !_selectedDocumentType.isCompatibleWith(actual);
+  }
+
+  /// Bandingkan dokumen yang diminta dengan dokumen yang dibaca dari chip.
+  void _checkDocumentTypeMatch() {
+    final actual = actualDocumentType;
+    if (actual == null) {
+      appLogger.w('[Mismatch] Dokumen aktual tidak dilaporkan SDK');
+      return;
+    }
+    if (isDocumentTypeMismatch) {
+      appLogger.e(
+        '[Mismatch] Dokumen tidak sesuai! diminta=${_selectedDocumentType.value} '
+        'dibaca=${actual.value}',
+      );
+    } else {
+      appLogger.i(
+        '[Mismatch] Dokumen sesuai: ${_selectedDocumentType.value} '
+        '(dibaca=${actual.value})',
+      );
+    }
+  }
+
+  void setNationality(Nationality nationality) {
+    _selectedNationality = nationality;
     notifyListeners();
   }
 
@@ -303,8 +346,12 @@ class KycViewModel extends ChangeNotifier {
       case VerificationMethod.readFace:
 if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
             _selectedDocumentType == LiquidDocumentType.myNumberCard ||
+            _selectedDocumentType == LiquidDocumentType.myNumberCardWithMyNumber ||
+            _selectedDocumentType == LiquidDocumentType.myNumberCardIntegratedDriverLicense ||
             _selectedDocumentType == LiquidDocumentType.residenceCard ||
-            _selectedDocumentType == LiquidDocumentType.specialPermanentResidentCertificate) {
+            _selectedDocumentType == LiquidDocumentType.residenceDocumentGen2 ||
+            _selectedDocumentType == LiquidDocumentType.specifiedResidenceCard ||
+            _selectedDocumentType == LiquidDocumentType.specifiedSpecialPermanentResidentCertificate) {
           // These document types support IC Card reading
           // Keep the current method if it supports IC card
         } else {
@@ -474,6 +521,8 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
           return KycResult.error(errorCode: 'CHIP_ERROR', message: _errorMessage);
         }
         _log('[STEP $stepNum] IC Card (NFC) → SUCCESS');
+
+        _checkDocumentTypeMatch();
 
         // ========================================
         // [SDK] Get OCR Results for quick preview

@@ -273,7 +273,7 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
                 children: [
                   const Icon(Icons.notes, size: 18),
                   const SizedBox(width: 6),
-                  Text('App (${_appLogger.totalCount})${_appLogger.errorCount > 0 ? ' ⚠️' : ''}'),
+                  Text('App (${_appLogger.totalCount})${_appLogger.errorCount > 0 ? ' (!)' : ''}'),
                 ],
               ),
             ),

@@ -69,10 +69,8 @@ class AppLogger {
     if (_isInitialized) return;
     _isInitialized = true;
     
-    if (kDebugMode) {
-      _setupErrorHandling();
-      Future.microtask(() => d('AppLogger initialized'));
-    }
+    _setupErrorHandling();
+    Future.microtask(() => d('AppLogger initialized'));
   }
 
   void _setupErrorHandling() {
@@ -106,8 +104,6 @@ class AppLogger {
   }
 
   void _addLog(String message, LogLevel level, {String? tag, Object? error, StackTrace? stackTrace}) {
-    if (!kDebugMode) return;
-
     final entry = LogEntry(
       message: message,
       level: level,

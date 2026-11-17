@@ -24,7 +24,7 @@
 -keep class asia.liquidinc.ekyc.sdk.** { *; }
 
 # Keep Flutter plugin
--keep class com.example.poc_liquidekyc_flutter.plugins.** { *; }
+-keep class id.co.bni.mobile_remittance_kcln_tokyo.liquid_ekyc.** { *; }
 
 # Print warnings for excluded classes
 -printmapping proguard-mapping.txt

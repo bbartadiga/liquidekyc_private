@@ -1,10 +1,14 @@
 import 'dart:convert';
-import 'dart:math';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
 import '../../core/constant/liquid_constants.dart';
+import '../../core/constant/liquid_mappings.dart';
+import '../../core/services/app_logger.dart';
 import '../../core/services/http_logger.dart';
+import '../../core/services/japanese_romaji_helper.dart';
 import '../../core/widgets/debug_http_overlay.dart';
 import 'kyc_retry_queue.dart';
 import 'kyc_queue_worker.dart';
@@ -13,11 +17,13 @@ import 'kyc_queue_worker.dart';
 typedef ProgressCallback = void Function(String step, bool isLoading);
 
 class KycBeApi {
-  static const String _beUrl = 'https://103.108.254.29:8066';
   static const Duration _timeout = Duration(seconds: 60);
   static const int _maxRetries = 3;
   static const int _baseRetryDelayMs = 1000;
-  static const String _apiKey = 'JDJhJDEwJENQem1xTFB3NlJodFZ1MEt0THYyMC5XVEEwNEdQc3dDT0RXY0NEYmpmL053WjVIaUt6ZnFD';
+
+  // Credentials + host mengikuti LiquidConfig (staging / production switch)
+  static String get _beUrl => LiquidConfig.beUrl;
+  static String get _apiKey => LiquidConfig.connectorApiKey;
   
   ProgressCallback? onProgress;
 
@@ -55,7 +61,7 @@ class KycBeApi {
   }
 
   http.Client _createClient() {
-    if (_bypassSsl && kDebugMode) {
+    if (_bypassSsl) {
       final ioClient = HttpClient();
       ioClient.badCertificateCallback = (cert, host, port) => true;
       return _AnnotatedClient(ioClient);
@@ -967,6 +973,17 @@ class ICCardInfoResponse {
   final String? expireDate;
   final String? myNumber;
   final String? idFacePhoto;
+  // Gen-2 / Specified Residence Card fields (D7 page 6-22)
+  final String? cardType;                   // 在留カード／特別永住者証明書の種別 0/1/2/5/6/7/8
+  final String? residentStatusCode;         // 在留資格 (コード) 3-digit
+  final String? kindOfPermissionCode;       // 許可の種類 (コード) 2-digit
+  final String? employmentRestrictionCode;  // 就労制限の有無 1-digit
+  final String? nationalityCode3;           // 国籍 (3桁) ISO 3166-1 alpha-3
+  final String? nationalityCode3Alt;       // 国籍 (3桁) 第二候補
+  // Stay period split (Gen-2 specific)
+  final int? stayPeriodYear;                // YY 形式
+  final int? stayPeriodMonth;               // MM 形式
+  final int? stayPeriodDay;                 // DDD 形式 (max 999)
   final int? statusCode;
   final String? errorMessage;
 
@@ -985,6 +1002,15 @@ class ICCardInfoResponse {
     this.expireDate,
     this.myNumber,
     this.idFacePhoto,
+    this.cardType,
+    this.residentStatusCode,
+    this.kindOfPermissionCode,
+    this.employmentRestrictionCode,
+    this.nationalityCode3,
+    this.nationalityCode3Alt,
+    this.stayPeriodYear,
+    this.stayPeriodMonth,
+    this.stayPeriodDay,
     this.statusCode,
     this.errorMessage,
   });
@@ -1032,6 +1058,14 @@ class ICCardInfoResponse {
       idFacePhoto = facePhotoData;
     }
 
+    // Stay period split — accepted as int or string ("3年"/"030" formats)
+    int? toInt(dynamic v) {
+      if (v == null) return null;
+      if (v is int) return v;
+      final s = v.toString().replaceAll(RegExp(r'[^0-9-]'), '');
+      return s.isEmpty ? null : int.tryParse(s);
+    }
+
     return ICCardInfoResponse(
       isSuccess: true,
       name: map['name'],
@@ -1047,6 +1081,20 @@ class ICCardInfoResponse {
       expireDate: map['expire_date'],
       myNumber: map['my_number'],
       idFacePhoto: idFacePhoto,
+      // Gen-2 fields
+      cardType: map['card_type']?.toString() ??
+                map['residence_card_type']?.toString(),
+      residentStatusCode: map['resident_status_code']?.toString(),
+      kindOfPermissionCode: map['kind_of_permission_code']?.toString(),
+      employmentRestrictionCode:
+          map['employment_restriction_code']?.toString(),
+      nationalityCode3: map['nationality_code3']?.toString() ??
+                        map['nationality_3digit']?.toString(),
+      nationalityCode3Alt: map['nationality_code3_alt']?.toString() ??
+                            map['nationality_3digit_alt']?.toString(),
+      stayPeriodYear: toInt(map['stay_period_year']),
+      stayPeriodMonth: toInt(map['stay_period_month']),
+      stayPeriodDay: toInt(map['stay_period_day']),
       statusCode: map['status_code'],
     );
   }
@@ -1059,6 +1107,31 @@ class ICCardInfoResponse {
     statusCode: statusCode,
     errorMessage: message,
   );
+}
+
+// ============================================================================
+// Extension on ICCardInfoResponse — Romaji (latin) versions
+// name_kana (katakana) instant via kana_kit; name (kanji) needs async
+// ============================================================================
+extension ICCardInfoResponseMapping on ICCardInfoResponse {
+  String? get nameRomaji => JapaneseRomajiHelper.toTitleCaseRomajiSync(nameKana);
+  Future<String?> get nameRomajiAsync =>
+      JapaneseRomajiHelper.toTitleCaseRomajiAsync(nameKana);
+  String? get nameKanjiRomaji => JapaneseRomajiHelper.toTitleCaseRomajiSync(name);
+  Future<String?> get nameKanjiRomajiAsync =>
+      JapaneseRomajiHelper.toTitleCaseRomajiAsync(name);
+  String? get addressRomaji => JapaneseRomajiHelper.toRomajiSync(address);
+  Future<String?> get addressRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(address);
+  String? get addressPrefRomaji => JapaneseRomajiHelper.toRomajiSync(addressPref);
+  Future<String?> get addressPrefRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(addressPref);
+  String? get addressCityRomaji => JapaneseRomajiHelper.toRomajiSync(addressCity);
+  Future<String?> get addressCityRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(addressCity);
+  String? get addressOtherRomaji => JapaneseRomajiHelper.toRomajiSync(addressOther);
+  Future<String?> get addressOtherRomajiAsync =>
+      JapaneseRomajiHelper.toRomajiAsync(addressOther);
 }
 
 class VerificationResultsResponse {
@@ -1154,6 +1227,21 @@ class OcrResultsBeResponse {
   final String? residentStatus;
   final String? stayPeriod;
   final String? stayExpireDate;
+  final String? idDocumentType;
+  // Gen-2 / Specified Residence Card fields (D7 page 6-22)
+  final String? cardType;
+  final String? residentStatusCode;
+  final String? kindOfPermissionCode;
+  final String? employmentRestrictionCode;
+  final String? nationalityCode3;
+  // Address change detection + change flags (D1 page 6)
+  final String? addressChanged;             // 0/1 — recently changed
+  final String? nameChanged;               // 0/1 — recently changed
+  final String? remarksExist;              // 0/1 — has remarks content
+  // Driver's License multi-category (D1 page ~10)
+  final List<String>? driversLicenseTypes;
+  // 個人番号 (My Number) — hanya untuk My Number Card
+  final String? myNumber;
   final int? statusCode;
   final String? errorMessage;
 
@@ -1174,6 +1262,17 @@ class OcrResultsBeResponse {
     this.residentStatus,
     this.stayPeriod,
     this.stayExpireDate,
+    this.idDocumentType,
+    this.cardType,
+    this.residentStatusCode,
+    this.kindOfPermissionCode,
+    this.employmentRestrictionCode,
+    this.nationalityCode3,
+    this.addressChanged,
+    this.nameChanged,
+    this.remarksExist,
+    this.driversLicenseTypes,
+    this.myNumber,
     this.statusCode,
     this.errorMessage,
   });
@@ -1186,6 +1285,52 @@ class OcrResultsBeResponse {
   }
 
   factory OcrResultsBeResponse.fromMap(Map<String, dynamic> map) {
+    final idDocumentType = map['id_document_type']?.toString();
+    final nationality2 = map['nationality'];
+    final residentStatus = map['resident_status'];
+
+    // Gen-2 fields
+    final cardType = map['card_type']?.toString();
+    final residentStatusCode = map['resident_status_code']?.toString();
+    final kindOfPermissionCode =
+        map['kind_of_permission_code']?.toString();
+    final employmentRestrictionCode =
+        map['employment_restriction_code']?.toString();
+    final nationalityCode3 =
+        map['nationality_code3']?.toString();
+
+    final addressChanged = map['address_changed']?.toString();
+    final nameChanged = map['name_changed']?.toString();
+    final remarksExist = map['remarks_exist']?.toString();
+    final driversLicenseTypes =
+        (map['drivers_license_types'] as List<dynamic>?)?.cast<String>();
+    final myNumber = map['my_number']?.toString();
+
+    appLogger.i(
+      '[OCR-Parse-BE] '
+      'id_document_type=$idDocumentType | '
+      'card_type=$cardType | '
+      'nationality_2=$nationality2 | '
+      'nationality_3=$nationalityCode3 | '
+      'resident_status=$residentStatus | '
+      'resident_status_code=$residentStatusCode | '
+      'kind_of_permission=$kindOfPermissionCode | '
+      'employment_restriction=$employmentRestrictionCode | '
+      'address_changed=${addressChanged ?? "-"} | '
+      'name_changed=${nameChanged ?? "-"} | '
+      'remarks_exist=${remarksExist ?? "-"} | '
+      'license_types=${driversLicenseTypes?.join(",") ?? "-"} | '
+      'my_number=${myNumber != null && myNumber.length >= 4 ? "*******${myNumber.substring(myNumber.length - 4)}" : "-"} | '
+      'name=${map['name'] ?? "-"} | '
+      'birthday=${map['birthday'] ?? "-"} | '
+      'sex=${map['sex'] ?? "-"} | '
+      'id_number=${map['id_number'] ?? "-"} | '
+      'expire_date=${map['expire_date'] ?? "-"} | '
+      'issue_date=${map['issue_date'] ?? "-"} | '
+      'stay_period=${map['stay_period'] ?? "-"} | '
+      'address=${map['address'] != null ? "***MASKED***" : "-"}',
+    );
+
     return OcrResultsBeResponse(
       isSuccess: true,
       name: map['name'],
@@ -1199,10 +1344,21 @@ class OcrResultsBeResponse {
       expireDate: map['expire_date'],
       idNumber: map['id_number'],
       issueDate: map['issue_date'],
-      nationality: map['nationality'],
-      residentStatus: map['resident_status'],
+      nationality: nationality2,
+      residentStatus: residentStatus,
       stayPeriod: map['stay_period'],
       stayExpireDate: map['stay_expire_date'],
+      idDocumentType: idDocumentType,
+      cardType: cardType,
+      residentStatusCode: residentStatusCode,
+      kindOfPermissionCode: kindOfPermissionCode,
+      employmentRestrictionCode: employmentRestrictionCode,
+      nationalityCode3: nationalityCode3,
+      addressChanged: addressChanged,
+      nameChanged: nameChanged,
+      remarksExist: remarksExist,
+      driversLicenseTypes: driversLicenseTypes,
+      myNumber: myNumber,
       statusCode: map['status_code'],
     );
   }

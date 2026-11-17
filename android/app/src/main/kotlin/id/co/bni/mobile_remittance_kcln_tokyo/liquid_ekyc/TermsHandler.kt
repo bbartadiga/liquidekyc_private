@@ -1,4 +1,4 @@
-package com.example.poc_liquidekyc_flutter.plugins
+package id.co.bni.mobile_remittance_kcln_tokyo.liquid_ekyc
 
 import asia.liquidinc.ekyc.applicant.external.TermsOfUseSettings
 import io.flutter.plugin.common.MethodChannel.Result

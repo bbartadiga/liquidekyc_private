@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../core/constant/liquid_constants.dart';
 import '../core/screens/debug_log_screen.dart';
 import '../persentation/viewmodels/kyc_viewmodel.dart';
-import '../persentation/views/screens/kyc_home_screen.dart';
+import '../persentation/views/screens/kyc_config_screen.dart';
 
 class LiquidEkycApp extends StatelessWidget {
   const LiquidEkycApp({super.key});
@@ -59,7 +59,7 @@ class LiquidEkycApp extends StatelessWidget {
             ),
           ),
         ),
-        home: KycHomeScreen(),
+        home: const KycConfigScreen(),
         routes: {
           '/debug': (context) => const DebugLogScreen(),
         },
@@ -69,11 +69,11 @@ class LiquidEkycApp extends StatelessWidget {
 }
 
 class LiquidEkycConfig {
-  static const String apiUrl = LiquidConfig.url;
+  static final String apiUrl = LiquidConfig.url;
   // Production mode: uncomment these
-  // static const String applicantId = LiquidConfig.applicantId;
-  // static const String token = LiquidConfig.token;
-  static const String apiKey = LiquidConfig.apiKey;
+  // static final String applicantId = LiquidConfig.applicantId;
+  // static final String token = LiquidConfig.token;
+  static final String apiKey = LiquidConfig.apiKey;
 
   static bool get isConfigured {
     return apiUrl.isNotEmpty &&

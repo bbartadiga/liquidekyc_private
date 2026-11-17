@@ -204,7 +204,7 @@ poc_liquidekyc_flutter/
 
 ```bash
 # Navigate ke project
-cd /Users/admin/Documents/BNI/test-bni/poc_liquidekyc_flutter
+cd /Users/admin/Documents/BNI/test-bni/module_liquid_ekyc
 
 # Setup FVM (jika belum)
 fvm install 3.38.0
@@ -642,7 +642,7 @@ val params = VerifyFaceParameters.Builder()
 
 ```bash
 # Navigate ke project
-cd /Users/admin/Documents/BNI/test-bni/poc_liquidekyc_flutter
+cd /Users/admin/Documents/BNI/test-bni/module_liquid_ekyc
 
 # Clean & get dependencies
 flutter clean

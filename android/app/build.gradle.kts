@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.poc_liquidekyc_flutter"
+    namespace = "com.example.module_liquid_ekyc"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -19,7 +19,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.poc_liquidekyc_flutter"
+        applicationId = "com.example.module_liquid_ekyc"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

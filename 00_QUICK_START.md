@@ -8,7 +8,7 @@
 
 ```bash
 # 1. Clone atau navigate ke project
-cd /Users/admin/Documents/BNI/test-bni/poc_liquidekyc_flutter
+cd /Users/admin/Documents/BNI/test-bni/module_liquid_ekyc
 
 # 2. Setup FVM (Flutter Version Manager)
 fvm install 3.38.0

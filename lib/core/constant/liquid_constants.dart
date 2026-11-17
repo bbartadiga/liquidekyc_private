@@ -13,24 +13,60 @@ class LiquidConfig {
   // ============================================================
   static const bool DEBUG_MODE = false;
   static const bool BYPASS_BE = false;
+
   // ============================================================
+  // ENVIRONMENT SWITCH
+  //   false = STAGING (default)
+  //   true  = PRODUCTION
+  //
+  // Catatan: 第2世代在留カード (Gen-2 Residence Card) BELUM bisa dites di
+  // env staging. Sudah tersedia di env production.
+  // Ref: "17. 2nd Generation Residence Card_Specified Residence Card/1. …対応のご案内.pdf"
+  //      (IC読取方式: 正式版 2026年7〜8月頃提供予定)
+  //
+  // Kredensial production BELUM diisi — minta ke Liquid CS (cs@liquidinc.asia)
+  // atau isi dari "18. APIKey and Credential for BNI" sheet (tab 本番環境).
+  // ============================================================
+  static const bool USE_PRODUCTION = false;
+
+  // ---- STAGING ----
+  // SDK API URL   : applicantsdk-api.stg-liquid-ekyc.com
+  // Connector URL : https://connector-bni.stg-liquid-ekyc.com
+  //   (app ini lewat proxy BNI: https://103.108.254.29:8066/inbound-liquid)
+  static const String _stgUrl = 'https://applicantsdk-api.stg-liquid-ekyc.com';
+  static const String _stgApiKey =
+      'JDJhJDEwJFRIQTBRTXllRG9tdnNNVEx3dHlVcXV4YTdvUWRyczZpbTJNVkZkNFYuM1hlL0taWXlMSDVX';
+  static const String _stgBeUrl = 'https://103.108.254.29:8066';
+  static const String _stgConnectorApiKey =
+      'JDJhJDEwJENQem1xTFB3NlJodFZ1MEt0THYyMC5XVEEwNEdQc3dDT0RXY0NEYmpmL053WjVIaUt6ZnFD';
+
+  // ---- PRODUCTION ---- (isi dari Liquid CS)
+  static const String _prodUrl = 'https://applicantsdk-api.liquid-ekyc.com';
+  static const String _prodApiKey = '';
+  static const String _prodBeUrl = '';
+  static const String _prodConnectorApiKey = '';
+
+  static String get url => USE_PRODUCTION ? _prodUrl : _stgUrl;
+  static String get apiKey => USE_PRODUCTION ? _prodApiKey : _stgApiKey;
+  static String get beUrl => USE_PRODUCTION ? _prodBeUrl : _stgBeUrl;
+  static String get connectorApiKey =>
+      USE_PRODUCTION ? _prodConnectorApiKey : _stgConnectorApiKey;
 
   // Credentials - STAGING (BNI Staging Environment)
-  static const String url = 'https://applicantsdk-api.stg-liquid-ekyc.com';
-  // PRODUCTION URL: https://applicantsdk-api.liquid-ekyc.com
+  //    applicantId/token di bawah ini HARDCODE & token hanya berlaku 90 menit
+  //    (ref: 017 SDKApply API). Jangan dipakai sebagai sumber kebenaran —
+  //    flow normal selalu ambil token baru dari BE saat user klik "Ambil Token".
 
   // ApplicantId & Token - dari backend (dynamic) atau set manual untuk dev
   static const String applicantId = '111902224425';
   static const String token = 'a35f3549a21cfa7150615e4fe5aa6b2bfcb8dbf7798a65d1a1ec400e96d4ee55';
-  
-  // Trial Mode: cukup gunakan API Key (Staging API Key)
-  static const String apiKey = 'JDJhJDEwJFRIQTBRTXllRG9tdnNNVEx3dHlVcXV4YTdvUWRyczZpbTJNVkZkNFYuM1hlL0taWXlMSDVX';
 
   static const int minSdkVersion = 24;
   static const Duration networkTimeout = Duration(seconds: 90);
 
   static bool get isDebugMode => DEBUG_MODE;
   static bool get isRealMode => !DEBUG_MODE;
+  static bool get isProduction => USE_PRODUCTION;
 }
 
 enum LiquidProcessingResultStatus {
@@ -82,6 +118,32 @@ enum LiquidProcessingResultStatus {
         return 'Terms not agreed';
       case LiquidProcessingResultStatus.unknown:
         return 'Unknown';
+    }
+  }
+}
+
+enum Nationality {
+  indonesia,
+  japan;
+
+  String get displayName {
+    switch (this) {
+      case Nationality.indonesia:
+        return 'Indonesia';
+      case Nationality.japan:
+        return 'Jepang';
+    }
+  }
+
+  List<LiquidDocumentType> get allowedDocuments {
+    switch (this) {
+      case Nationality.indonesia:
+        return [
+          LiquidDocumentType.residenceCard,
+          LiquidDocumentType.residenceDocumentGen2,
+        ];
+      case Nationality.japan:
+        return [LiquidDocumentType.driverLicense, LiquidDocumentType.myNumberCard];
     }
   }
 }
@@ -239,6 +301,9 @@ enum LiquidDocumentType {
   nonJapanesePassport,
   residenceCard,
   specialPermanentResidentCertificate,
+  residenceDocumentGen2,
+  specifiedResidenceCard,
+  specifiedSpecialPermanentResidentCertificate,
   healthInsuranceCard,
   employeeIdCard,
   pensionBook,
@@ -269,6 +334,12 @@ enum LiquidDocumentType {
         return LiquidDocumentType.residenceCard;
       case 'SPECIAL_PERMANENT_RESIDENT_CERTIFICATE':
         return LiquidDocumentType.specialPermanentResidentCertificate;
+      case 'RESIDENCE_DOCUMENT_GEN2':
+        return LiquidDocumentType.residenceDocumentGen2;
+      case 'SPECIFIED_RESIDENCE_CARD':
+        return LiquidDocumentType.specifiedResidenceCard;
+      case 'SPECIFIED_SPECIAL_PERMANENT_RESIDENT_CERTIFICATE':
+        return LiquidDocumentType.specifiedSpecialPermanentResidentCertificate;
       case 'HEALTH_INSURANCE_CARD':
         return LiquidDocumentType.healthInsuranceCard;
       case 'EMPLOYEE_ID_CARD':
@@ -282,8 +353,21 @@ enum LiquidDocumentType {
       case 'BASIC_RESIDENT_REGISTRATION_CARD':
         return LiquidDocumentType.basicResidentRegistrationCard;
       default:
-        return LiquidDocumentType.driverLicense;
+        return LiquidDocumentType.defaultType;
     }
+  }
+
+  /// RESIDENCE_DOCUMENT_GEN2 bersifat payung: SDK membaca 4 jenis kartu
+  /// (在留カード / 特別永住者証明書 / 第2世代在留カード / 第2世代特別永住者証明書).
+  /// Selain itu harus cocok persis.
+  bool isCompatibleWith(LiquidDocumentType actual) {
+    if (this == actual) return true;
+    if (this == LiquidDocumentType.residenceDocumentGen2) {
+      return actual == LiquidDocumentType.residenceCard ||
+          actual == LiquidDocumentType.specialPermanentResidentCertificate ||
+          actual == LiquidDocumentType.residenceDocumentGen2;
+    }
+    return false;
   }
 
   String get value {
@@ -306,6 +390,12 @@ enum LiquidDocumentType {
         return 'RESIDENCE_CARD';
       case LiquidDocumentType.specialPermanentResidentCertificate:
         return 'SPECIAL_PERMANENT_RESIDENT_CERTIFICATE';
+      case LiquidDocumentType.residenceDocumentGen2:
+        return 'RESIDENCE_DOCUMENT_GEN2';
+      case LiquidDocumentType.specifiedResidenceCard:
+        return 'SPECIFIED_RESIDENCE_CARD';
+      case LiquidDocumentType.specifiedSpecialPermanentResidentCertificate:
+        return 'SPECIFIED_SPECIAL_PERMANENT_RESIDENT_CERTIFICATE';
       case LiquidDocumentType.healthInsuranceCard:
         return 'HEALTH_INSURANCE_CARD';
       case LiquidDocumentType.employeeIdCard:
@@ -341,6 +431,12 @@ enum LiquidDocumentType {
         return 'Residence Card';
       case LiquidDocumentType.specialPermanentResidentCertificate:
         return 'Special Permanent Resident Certificate';
+      case LiquidDocumentType.residenceDocumentGen2:
+        return 'Residence Card (Gen-2 / 第2世代在留カード等)';
+      case LiquidDocumentType.specifiedResidenceCard:
+        return 'Specified Residence Card';
+      case LiquidDocumentType.specifiedSpecialPermanentResidentCertificate:
+        return 'Specified Special Permanent Resident Certificate';
       case LiquidDocumentType.healthInsuranceCard:
         return 'Health Insurance Card';
       case LiquidDocumentType.employeeIdCard:
@@ -542,22 +638,24 @@ enum KycStep {
 }
 
 // ============================================================
+// ============================================================
 // LIQUID SDK ERROR CODES (v1.45.0)
+// & BE COMMON ERROR CODES (G06 v1.3.0)
 // ============================================================
 enum LiquidErrorCode {
-  // Session & Token Errors
+  // ---- Session & Token Errors ----
   sessionTimeout('SE10022', 'Session expired after 90 minutes'),
   invalidToken('SE10001', 'Invalid Token'),
   screenTimeout('SE10021', 'Screen timeout - device inactive'),
-  
-  // Camera Errors
+
+  // ---- Camera Errors ----
   cameraDenied('SE10011', 'Camera access denied'),
   cameraNotAllowed('SE10012', 'Camera not allowed when SDK started'),
-  
-  // IC Chip Errors
+
+  // ---- IC Chip Errors ----
   icChipLocked('SE20001', 'IC Chip locked - PIN wrong multiple times'),
   incorrectPin('SE20015', 'Incorrect PIN'),
-  pinErrorExceeded('SE20005', 'PIN error count exceeded'),
+  pinErrorExceeded('SE20005', 'Pin error count exceeded'),
   icChipReadError('SE21001', 'IC Chip could not be read'),
   icChipUnusual('SE21011', 'IC chip has unusual updated information'),
   under16YearsOld('SE21101', 'Card belongs to person under 16 years old'),
@@ -565,22 +663,22 @@ enum LiquidErrorCode {
   nfcOff('SE22001', 'NFC setting is turned off'),
   movingCard('SE22051', 'Moving card away during reading'),
   externalCharImages('SE23001', 'Card has more than 7 external characters'),
-  
-  // JPKI & Mynaportal Errors
-  jpkiRejected('SE25001', 'Public Certification rejected - certificate revoked or identity changed'),
+
+  // ---- JPKI & Mynaportal Errors ----
+  jpkiRejected('SE25001', 'Public Certifications rejected - certificate revoked or identity changed'),
   jpkiError('SE25011', 'JPKI error - fake card or manipulated communication'),
   mynaportalNotInstalled('SE26000', 'Mynaportal application not installed'),
   mynaportalError('SE26201', 'Unknown error in Mynaportal application'),
   invalidDateOfBirth('SE91025', 'Invalid date of birth format'),
-  
-  // Special Feature Errors
+
+  // ---- Special Feature Errors ----
   mynaIntegrated('SE27001', 'MyNumber integrated with Driving History Certificate'),
   mynaLicenseExpired('SE27205', 'MyNa Driver\'s License has expired'),
   appleWalletNotAvailable('SE28001', 'National Identity Card on iPhone cannot be used'),
   iosVersionIssue('SE28010', 'iOS version not supported (need iOS 18.5+)'),
   biometricNotSupported('SE28011', 'Touch ID and Face ID not supported'),
-  
-  // Communication Errors
+
+  // ---- Communication Errors ----
   communicationFailure('SE05001', 'Communication failure - network error'),
   serverError('SE05002', 'Server error'),
   
@@ -612,7 +710,39 @@ enum LiquidErrorCode {
   
   // Undefined
   undefinedError('SE90000', 'Undefined error'),
-  
+
+  // ============================================================
+  // BE Common Error Codes (G06 v1.3.0) — Connector API errors
+  // ============================================================
+  beInvalidRequest('CE09999', 'BE: Invalid request parameters'),
+  beAuthError('CE02401', 'BE: API authentication error (Invalid API Key)'),
+  beApiNotAllowed('CE00023', 'BE: API cannot be used due to business settings'),
+  beApplicantNotFound('CE00001', 'BE: Applicant ID is not found'),
+  beApplicantAlreadyUsed('CE00002', 'BE: Specified Applicant ID is already used'),
+  beCannotResubmit('CE00003', 'BE: Cannot resubmit due to current application status'),
+  beKycIncomplete('CE00004', 'BE: KYC operation has not been completed yet'),
+  beApplicationIncompleteOrExpired('CE00005', 'BE: Application incomplete or expired'),
+  beKycResultRegistered('CE00006', 'BE: KYC result is already registered'),
+  bePhotoNotCollected('CE00007', 'BE: Photo collection is not done'),
+  beKycAppNotCompleted('CE00008', 'BE: KYC application is not completed yet'),
+  beKycOperationInProgress('CE00009', 'BE: KYC operation is in progress'),
+  beAppExpired('CE00011', 'BE: KYC application has expired (URL expired)'),
+  beUnacceptableIdDocument('CE00012', 'BE: Unacceptable ID document type'),
+  beOcrOrVerificationNotRun('CE00017', 'BE: OCR or verification has not been run'),
+  beApplicantInfoDuplicate('CE00018', 'BE: Application info cannot be registered to the Applicant ID'),
+  beNoResponseValue('CE00019', 'BE: ID document with no response value'),
+  beWebApplicantId('CE00021', 'BE: Applicant ID is for WEB (not for SDK)'),
+  beNoImageResponse('CE00022', 'BE: Image number with no response value'),
+  beUnacceptableRegion('CE00026', 'BE: Unacceptable region code'),
+  beIncorrectRedirectUrl('CE00027', 'BE: Incorrect redirect URL'),
+  beAdditionalDocNoResponse('CE00028', 'BE: Additional document without a response value'),
+  beMyNumberScanPending('CE00029', 'BE: My number scanning is not completed yet'),
+  beAuthenticityMethodNotAllowed('CE00030', 'BE: Authenticity methods for personal appearance not available'),
+  bePfDuplicateUserId('CE00031', 'BE: Duplicate user ID for KYC by PF company'),
+  beApplicationInfoNotRegistered('CE00032', 'BE: No application information registered'),
+  beMethodNotAllowed('CE09405', 'BE: Method not allowed'),
+  beSystemMaintenance('CE01000', 'BE: System in maintenance'),
+
   // Unknown
   unknown('', 'Unknown Error');
 
@@ -717,6 +847,62 @@ enum LiquidErrorCode {
         return 'Document scan timeout or quality too low.';
       case LiquidErrorCode.serverMaintenance:
         return 'Server under maintenance.';
+      case LiquidErrorCode.beInvalidRequest:
+        return 'Invalid request sent to server.';
+      case LiquidErrorCode.beAuthError:
+        return 'BE API key authentication failed.';
+      case LiquidErrorCode.beApiNotAllowed:
+        return 'This API is not enabled for your account.';
+      case LiquidErrorCode.beApplicantNotFound:
+        return 'Applicant ID not found in server.';
+      case LiquidErrorCode.beApplicantAlreadyUsed:
+        return 'Applicant ID is already in use.';
+      case LiquidErrorCode.beCannotResubmit:
+        return 'Cannot re-apply — current application is in operational state.';
+      case LiquidErrorCode.beKycIncomplete:
+        return 'KYC operation has not been completed. Wait or restart.';
+      case LiquidErrorCode.beApplicationIncompleteOrExpired:
+        return 'Application is incomplete or expired.';
+      case LiquidErrorCode.beKycResultRegistered:
+        return 'KYC result is already registered for this applicant.';
+      case LiquidErrorCode.bePhotoNotCollected:
+        return 'Photos have not been collected yet.';
+      case LiquidErrorCode.beKycAppNotCompleted:
+        return 'KYC application has not been completed yet.';
+      case LiquidErrorCode.beKycOperationInProgress:
+        return 'KYC operation is in progress. Please wait.';
+      case LiquidErrorCode.beAppExpired:
+        return 'Application URL has expired. Restart verification.';
+      case LiquidErrorCode.beUnacceptableIdDocument:
+        return 'ID document type not supported for your account.';
+      case LiquidErrorCode.beOcrOrVerificationNotRun:
+        return 'OCR or verification has not been run yet.';
+      case LiquidErrorCode.beApplicantInfoDuplicate:
+        return 'Application info is already registered for this applicant.';
+      case LiquidErrorCode.beNoResponseValue:
+        return 'ID document has no response data available.';
+      case LiquidErrorCode.beWebApplicantId:
+        return 'Applicant ID is for WEB, not SDK.';
+      case LiquidErrorCode.beNoImageResponse:
+        return 'Image number has no response value.';
+      case LiquidErrorCode.beUnacceptableRegion:
+        return 'Region code not accepted for this organization.';
+      case LiquidErrorCode.beIncorrectRedirectUrl:
+        return 'Redirect URL does not match allowed FQDN.';
+      case LiquidErrorCode.beAdditionalDocNoResponse:
+        return 'Additional document has no response value.';
+      case LiquidErrorCode.beMyNumberScanPending:
+        return 'My Number scanning is still in progress.';
+      case LiquidErrorCode.beAuthenticityMethodNotAllowed:
+        return 'Authenticity method not allowed for this verification type.';
+      case LiquidErrorCode.bePfDuplicateUserId:
+        return 'Duplicate user ID detected for PF provider.';
+      case LiquidErrorCode.beApplicationInfoNotRegistered:
+        return 'Application info has not been registered yet.';
+      case LiquidErrorCode.beMethodNotAllowed:
+        return 'HTTP method not allowed for this endpoint.';
+      case LiquidErrorCode.beSystemMaintenance:
+        return 'BE server is under maintenance. Try later.';
       case LiquidErrorCode.undefinedError:
         return 'Undefined error occurred.';
       case LiquidErrorCode.unknown:
