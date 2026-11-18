@@ -41,12 +41,15 @@ class KycRepository {
     required String applicantId,
     required String token,
   }) async {
+    // Penting: label mode sebelumnya hardcode "PRODUCTION" walau URL-nya
+    // staging — bikin salah baca. Sekarang ikut env yang benar.
+    final envLabel = LiquidConfig.effectiveUseProduction ? 'PRODUCTION' : 'STAGING';
     debugPrint('[STEP 8] Repository.initializeWithCredentials() called');
-    debugPrint('  Mode: PRODUCTION');
+    debugPrint('  Mode: $envLabel');
     debugPrint('  url: $url');
     debugPrint('  applicantId: $applicantId');
     appLogger.i('[STEP 8] Repository.initializeWithCredentials() called');
-    appLogger.i('  Mode: PRODUCTION');
+    appLogger.i('  Mode: $envLabel');
     appLogger.i('  url: $url');
     appLogger.i('  applicantId: $applicantId');
     appLogger.i('  token: $token');

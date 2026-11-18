@@ -60,10 +60,18 @@ class AppLogger {
   Stream<List<LogEntry>> get stream => _controller.stream;
   List<LogEntry> get logs => List.unmodifiable(_logs);
   List<LogEntry> get errors => List.unmodifiable(_errors);
-  List<LogEntry> get allLogs => [..._logs.reversed.toList()];
+  List<LogEntry> get allLogs => [..._logs.reversed];
 
   int get errorCount => _errors.length;
   int get totalCount => _logs.length;
+
+  /// Jumlah entry dengan level ERROR — beda dengan [errorCount].
+  ///
+  /// [errorCount] cuma ngitung error yang punya objek error, jadi bisa 0
+  /// padahal log-nya ada beberapa baris ERROR. Untuk header export
+  /// ("Errors: N") yang dipakai [errorLevelCount].
+  int get errorLevelCount =>
+      _logs.where((e) => e.level == LogLevel.error).length;
 
   void init() {
     if (_isInitialized) return;

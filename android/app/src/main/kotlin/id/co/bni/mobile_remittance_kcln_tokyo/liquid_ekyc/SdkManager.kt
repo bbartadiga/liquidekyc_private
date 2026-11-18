@@ -21,6 +21,7 @@ import asia.liquidinc.ekyc.applicant.external.result.LiquidProcessingResult
 import asia.liquidinc.ekyc.applicant.external.result.LiquidDocumentVerificationResult
 import asia.liquidinc.ekyc.applicant.external.result.LiquidChipVerificationResult
 import asia.liquidinc.ekyc.applicant.external.result.LiquidFaceVerificationResult
+import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.Result
 
 object SdkConfig {
@@ -79,8 +80,23 @@ object SdkManager {
         pendingRequestedDocumentType = null
     }
     
+    /// Channel buat kirim log native ke Dart ( biar masuk app log export).
+    private var logChannel: MethodChannel? = null
+
+    fun attachLogChannel(channel: MethodChannel) {
+        logChannel = channel
+    }
+
     fun log(msg: String) {
         Log.d(SdkConfig.TAG, msg)
+        // Teruskan ke Dart supaya bisa masuk file export & log Telegram.
+        // Native -> Dart invoke harus di main thread.
+        val ch = logChannel ?: return
+        try {
+            ch.invokeMethod("nativeLog", msg)
+        } catch (e: Exception) {
+            // Dart belum siap / channel sudah detached — abaikan, jangan crash.
+        }
     }
     
     fun registerLaunchers(act: ComponentActivity) {
@@ -136,7 +152,10 @@ object SdkManager {
 
             log("  Registering verifyIdChipLauncher...")
             verifyIdChipLauncher.register(act, ResultHandler<LiquidChipVerificationResult> { data ->
-                log("VerifyIdChip callback: ${data.resultStatus?.name}")
+                log("VerifyIdChip callback: status=${data.resultStatus?.name} errorCode=${data.errorCode}")
+                log("  title=${data.additionalDataTitle}")
+                log("  message=${data.additionalDataMessage}")
+                log("  chipData=${if (data.liquidChipData != null) "present" else "null"} autoVerify=${data.autoVerificationResult != null} docImage=${data.documentImage != null}")
                 handler.post {
                     pendingResult?.let { result ->
                         val payload = mutableMapOf<String, Any?>(
@@ -146,7 +165,17 @@ object SdkManager {
                             "additionalDataMessage" to (data.additionalDataMessage ?: "")
                         )
 
+                        // Error data chip: sisa percobaan sebelum kartu terkunci + jenis kredensial
+                        data.liquidChipData?.liquidChipErrorData?.let { errData ->
+                            payload["chipErrorData"] = mapOf(
+                                "attemptsRemainingUntilChipLocked" to errData.attemptsRemainingUntilChipLocked,
+                                "credentialType" to (errData.liquidChipErrorCredentialType?.name ?: "UNSPECIFIED"),
+                            )
+                            log("VerifyIdChip chipErrorData: attemptsRemaining=${errData.attemptsRemainingUntilChipLocked} credential=${errData.liquidChipErrorCredentialType?.name}")
+                        }
+
                         val actualDocType = data.liquidChipData?.liquidDocumentType
+                        log("  requestedDocType=${pendingRequestedDocumentType?.name} actualDocType=${actualDocType?.name}")
                         actualDocType?.let { payload["liquidDocumentType"] = it.name }
                         VerificationHandler.buildChipDataMap(data)?.let { payload["liquidChipData"] = it }
                         VerificationHandler.buildAutoVerificationMap(data)?.let { payload["autoVerificationResult"] = it }
@@ -189,6 +218,7 @@ object SdkManager {
 
             launchersRegistered = true
             log("===========================================")
+            log("SDK version: ${FinalizeHandler.getSdkVersionQuietly()}")
             log("ALL SDK launchers registered successfully!")
             log("  launchersRegistered: $launchersRegistered")
             log("===========================================")

@@ -83,6 +83,9 @@ object FinalizeHandler {
         SdkManager.log("FinalizeHandler.getSdkVersion()")
         return "1.47.0"
     }
+
+    /// Versi SDK tanpa nulis log (dipakai saat startup register launchers).
+    fun getSdkVersionQuietly(): String = "1.47.0"
     
     fun isNfcAvailable(): Boolean {
         val ctx = SdkManager.getContext() ?: return false

@@ -1,7 +1,5 @@
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 
 import 'app_logger.dart';
 
@@ -13,34 +11,60 @@ class HttpLogger {
   final List<HttpLogEntry> logs = [];
   static const int maxLogs = 500;
   static const int _bodyPreviewLength = 220;
+  static const int maxCapturedBytes = 64 * 1024;
 
-  void _logRequest(String method, String url, Map<String, String>? headers) {
+  static const Set<String> _sensitiveHeaders = {
+    'x-ekyc-api-key',
+    'x-api-key',
+    'authorization',
+  };
+
+  void logRequest(
+    String method,
+    String url,
+    Map<String, String>? headers, {
+    String? body,
+  }) {
     if (kDebugMode) {
       debugPrint('[HTTP] $method $url');
       if (headers != null) {
-        debugPrint('[HTTP Headers] ${jsonEncode(headers)}');
+        debugPrint('[HTTP Headers] ${jsonEncode(_maskHeaders(headers))}');
+      }
+      if (body != null && body.isNotEmpty) {
+        debugPrint('[HTTP Request Body] $body');
       }
     }
-    appLogger.i('[HTTP] $method $url', tag: 'HTTP-REQ');
+
+    final maskedHeaders = _maskHeaders(headers);
+    final headerLine = maskedHeaders.isEmpty
+        ? ''
+        : ' headers=${jsonEncode(maskedHeaders)}';
+    final bodyLine = (body != null && body.isNotEmpty) ? ' body=$body' : '';
+
+    appLogger.i('[HTTP] $method $url$headerLine$bodyLine', tag: 'HTTP-REQ');
   }
 
-  void _logResponse(String method, String url, int statusCode, String? body, DateTime startTime, DateTime endTime) {
+  void logResponse(
+    String method,
+    String url,
+    int statusCode,
+    String? body,
+    DateTime startTime,
+    DateTime endTime,
+  ) {
     final duration = endTime.difference(startTime).inMilliseconds;
     final isError = statusCode >= 400;
 
     if (kDebugMode) {
       debugPrint('[HTTP Response] $statusCode (${duration}ms) - $url');
-      if (body != null && body.isNotEmpty && isError) {
-        if (body.length > 500) {
-          debugPrint('[HTTP Body] ${body.substring(0, 500)}...');
-        } else {
-          debugPrint('[HTTP Body] $body');
-        }
+      if (body != null && body.isNotEmpty) {
+        final limit = body.length > 500 ? 500 : body.length;
+        debugPrint('[HTTP Body] ${body.substring(0, limit)}${body.length > 500 ? '...' : ''}');
       }
     }
 
-    // Body preview HANYA untuk error responses (4xx/5xx/0).
-    // Success responses ga kirim body — biar log ga spam di Telegram.
+    // Body preview hanya dikirim ke Telegram untuk error response (4xx/5xx/0).
+    // Success response cukup disimpan di log entry supaya bisa dilihat di app.
     String bodyLine = '';
     if (body != null && body.isNotEmpty && isError) {
       final preview = body.length > _bodyPreviewLength
@@ -61,7 +85,7 @@ class HttpLogger {
       method: method,
       url: url,
       statusCode: statusCode,
-      responseBody: body,
+      responseBody: _preview(body),
       startTime: startTime,
       endTime: endTime,
       duration: duration,
@@ -77,6 +101,23 @@ class HttpLogger {
   }
 
   List<HttpLogEntry> getAll() => List.unmodifiable(logs);
+
+  Map<String, String> _maskHeaders(Map<String, String>? headers) {
+    if (headers == null) return const {};
+    final masked = <String, String>{};
+    headers.forEach((key, value) {
+      masked[key] = _sensitiveHeaders.contains(key.toLowerCase())
+          ? '***'
+          : value;
+    });
+    return masked;
+  }
+
+  String? _preview(String? body) {
+    if (body == null || body.isEmpty) return null;
+    if (body.length <= _bodyPreviewLength) return body;
+    return '${body.substring(0, _bodyPreviewLength)}…(${body.length}b)';
+  }
 }
 
 class HttpLogEntry {
@@ -100,44 +141,4 @@ class HttpLogEntry {
 
   bool get isSuccess => statusCode >= 200 && statusCode < 300;
   bool get isError => statusCode >= 400;
-}
-
-class LoggingClient extends http.BaseClient {
-  final http.Client _inner = http.Client();
-  final HttpLogger _logger = HttpLogger();
-
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final startTime = DateTime.now();
-    final url = request.url.toString();
-    final method = request.method;
-    
-    _logger._logRequest(method, url, request.headers);
-
-    try {
-      final streamedResponse = await _inner.send(request);
-      final endTime = DateTime.now();
-      
-      final body = await streamedResponse.stream.bytesToString();
-      
-      _logger._logResponse(method, url, streamedResponse.statusCode, body, startTime, endTime);
-
-      return http.StreamedResponse(
-        Stream.value(utf8.encode(body)),
-        streamedResponse.statusCode,
-        headers: streamedResponse.headers,
-        reasonPhrase: streamedResponse.reasonPhrase,
-        request: request,
-      );
-    } catch (e) {
-      final endTime = DateTime.now();
-      _logger._logResponse(method, url, 0, e.toString(), startTime, endTime);
-      rethrow;
-    }
-  }
-
-  @override
-  void close() {
-    _inner.close();
-  }
 }

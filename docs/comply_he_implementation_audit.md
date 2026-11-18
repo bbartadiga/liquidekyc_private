@@ -447,7 +447,7 @@ Dan extension getter di `OcrResultsBeResponse.nationalityCode3Name`.
 | Chip data (`myNumber`, `card_type`, dokumen aktual) sampai ke Dart | ✅ Done (17 Nov) | – |
 | Auto verification result (`faceScore` dll) sampai ke Dart | ✅ Done (17 Nov) | – |
 | Deteksi mismatch dokumen (diminta vs dibaca) | ✅ Done (17 Nov) | – |
-| HTTP logging aktif (request ke Liquid kelihatan) | ❌ TODO | Low |
+| HTTP logging aktif (request ke Liquid kelihatan) | ✅ Done (17 Nov) | Log di `_AnnotatedClient`, jalan release mode juga |
 | `operation_assignment_priority` per dokumen (fix TnC per doc type) | ❌ TODO | Medium (+ konfirmasi Liquid) |
 | Special PR Cert code `15` | ❌ TODO | Trivial |
 | Fields `cardType/residentStatusCode/...` di models | ❌ TODO | Medium |

@@ -33,6 +33,7 @@ class _KycConfigScreenState extends State<KycConfigScreen> {
     if (_docType == null) return;
     final viewModel = context.read<KycViewModel>();
     viewModel.setNationality(_nationality);
+    // Project ini HANYA pakai COMPLY_HE (IC Card + Face).
     viewModel.setVerificationMethod(VerificationMethod.complyHe);
     viewModel.setDocumentType(_docType!);
     Navigator.push(

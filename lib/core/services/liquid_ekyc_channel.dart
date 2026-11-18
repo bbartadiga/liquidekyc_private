@@ -14,7 +14,21 @@ class LiquidEkycChannel {
 
   static final LiquidEkycChannel _instance = LiquidEkycChannel._internal();
   factory LiquidEkycChannel() => _instance;
-  LiquidEkycChannel._internal();
+  LiquidEkycChannel._internal() {
+    _channel.setMethodCallHandler(_handleNativeCall);
+  }
+
+  /// Log dari sisi native (Liquid SDK) diteruskan ke app logger, supaya ikut
+  /// masuk file export — bukan cuma Logcat yang nggak bisa di-share.
+  ///
+  /// Level DEBUG + tag 'Native': Telegram uploader menyaring tag ini supaya
+  /// log SDK yang banyak nggak menimpa log aplikasi di Telegram.
+  static Future<Object?> _handleNativeCall(MethodCall call) async {
+    if (call.method == 'nativeLog') {
+      appLogger.d('[Native] ${call.arguments}', tag: 'Native');
+    }
+    return null;
+  }
 
   MethodChannel get channel => _channel;
 

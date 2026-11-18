@@ -68,39 +68,118 @@ object VerificationHandler {
 
     /**
      * Mapping LiquidChipData -> Map untuk channel ke Dart.
-     *(card_type memakai kode numeric yang sama dengan Connector API:
+     *
+     * Prinsip: semua getter non-Bitmap di LiquidChipData diteruskan, supaya
+     * tidak ada data yang hilang di sisi app (mis. detail izin tinggal
+     * Gen-2 yang hanya ada di residenceDocumentGen2Data).
+     *
+     * Bitmap tidak dikirim (terlalu besar) — cukup penanda keberadaannya.
+     * (card_type memakai kode numeric yang sama dengan Connector API:
      *  1=在留カード 2=特別永住者証明書 5=第2世代在留 6=第2世代特別永住 7=特定在留 8=特定特別永住)
      */
     fun buildChipDataMap(result: LiquidChipVerificationResult): Map<String, Any?>? {
         val chip = result.liquidChipData ?: return null
         val map = mutableMapOf<String, Any?>()
 
+        // --- Nama ---
         chip.name?.let { map["name"] = it }
         chip.nameKana?.let { map["nameKana"] = it }
+        chip.nameHalfWidthKana?.let { map["nameHalfWidthKana"] = it }
+        chip.lastNameKanaCandidates?.let { map["lastNameKanaCandidates"] = it }
+        chip.lastNameHalfWidthKanaCandidates?.let { map["lastNameHalfWidthKanaCandidates"] = it }
+        chip.firstNameKanaCandidates?.let { map["firstNameKanaCandidates"] = it }
+        chip.firstNameHalfWidthKanaCandidates?.let { map["firstNameHalfWidthKanaCandidates"] = it }
+        chip.previousName?.let { map["previousName"] = it }
+        chip.previousLastNameKanaCandidates?.let { map["previousLastNameKanaCandidates"] = it }
+        chip.previousLastNameHalfWidthKanaCandidates?.let {
+            map["previousLastNameHalfWidthKanaCandidates"] = it
+        }
+        chip.aliasName?.let { map["aliasName"] = it }
+
+        // --- Identitas dasar ---
         chip.birthday?.let { map["birthday"] = it }
         chip.sex?.let { map["sex"] = it.name }
+        chip.idNumber?.let { map["idNumber"] = it }
+        chip.myNumber?.let { map["myNumber"] = it }
+        chip.issueDate?.let { map["issueDate"] = it }
+        chip.expireDate?.let { map["expireDate"] = it }
+        chip.zipCode?.let { map["zipCode"] = it }
+
+        // --- Alamat ---
         chip.address?.let { map["address"] = it }
         chip.addressPref?.let { map["addressPref"] = it }
         chip.addressCity?.let { map["addressCity"] = it }
         chip.addressOther?.let { map["addressOther"] = it }
-        chip.zipCode?.let { map["zipCode"] = it }
-        chip.idNumber?.let { map["idNumber"] = it }
-        chip.issueDate?.let { map["issueDate"] = it }
-        chip.expireDate?.let { map["expireDate"] = it }
-        chip.myNumber?.let { map["myNumber"] = it }
+        chip.addressModificationHistories?.let { histories ->
+            map["addressModificationHistories"] = histories.map { it.address }
+        }
+
+        // --- Status tinggal ---
+        chip.movedAbroad?.let { map["movedAbroad"] = it.name }
+        chip.plannedAbroadMoveDate?.let { map["plannedAbroadMoveDate"] = it }
+        chip.japaneseForeignerJudgment?.let { map["japaneseForeignerJudgment"] = it.name }
+        chip.pscName?.let { map["pscName"] = it }
+        chip.pscNames?.let { map["pscNames"] = it }
+
+        // --- Jenis dokumen ---
         chip.liquidDocumentType?.let { map["liquidDocumentType"] = it.name }
         chip.liquidResidenceCardType?.let {
             map["residenceCardType"] = residenceCardTypeCode(it)
             map["residenceCardTypeEnum"] = it.name
         }
         chip.liquidResidenceCardInfoType?.let { map["residenceCardInfoType"] = it.name }
+
+        // --- Izin tinggal (generik, untuk kartu non Gen-2) ---
+        chip.residenceCardComprehensivePermission?.let {
+            map["residenceCardComprehensivePermission"] = it
+        }
+        chip.residenceCardIndividualPermission?.let {
+            map["residenceCardIndividualPermission"] = it
+        }
+
+        // --- SIM ---
         chip.driversLicenseTypes?.let { map["driversLicenseTypes"] = it }
         chip.driversLicenseConditions?.let { map["driversLicenseConditions"] = it }
         chip.driversLicenseAcquisitionDates?.let { map["driversLicenseAcquisitionDates"] = it }
-        chip.residenceCardComprehensivePermission?.let { map["residenceCardComprehensivePermission"] = it }
-        chip.residenceCardIndividualPermission?.let { map["residenceCardIndividualPermission"] = it }
+
+        // --- My Number Card + SIM terintegrasi ---
+        chip.myNumberCardIntegratedDriverLicenseData?.let { data ->
+            map["myNumberCardIntegratedDriverLicense"] = mapOf(
+                "colorCategory" to data.colorCategory,
+                "conditions" to data.conditions,
+                "types" to data.types,
+                "remarks" to data.remarks,
+                "acquisitionDates" to data.acquisitionDates,
+                "recordNumber" to data.recordNumber,
+                "validUntil" to data.validUntil,
+            )
+        }
+
+        // --- Residence Card Gen-2 ---
+        chip.residenceDocumentGen2Data?.let { data ->
+            map["residenceDocumentGen2"] = mapOf(
+                "comprehensivePermissionCode" to data.comprehensivePermissionCode,
+                "expireDateOfComprehensivePermission" to data.expireDateOfComprehensivePermission,
+                "individualPermission" to data.individualPermission?.name,
+                "residenceDocumentGen2InfoType" to data.residenceDocumentGen2InfoType?.name,
+                "nationalityCode" to data.nationalityCode,
+                "residenceStatusCode" to data.residenceStatusCode,
+                "stayPeriodYear" to data.stayPeriodYear,
+                "stayPeriodMonths" to data.stayPeriodMonths,
+                "stayPeriodDay" to data.stayPeriodDay,
+                "kindOfPermissionCode" to data.kindOfPermissionCode,
+                "permittedDate" to data.permittedDate,
+                "employmentRestriction" to data.employmentRestriction?.name,
+                "stayExpireDate" to data.stayExpireDate,
+                "stayUpdateStatus" to data.stayUpdateStatus?.name,
+                "immigrationCommissionerStatement" to data.immigrationCommissionerStatement?.name,
+            )
+        }
+
+        // --- Penanda gambar (bitmap tidak dikirim) ---
         if (chip.idFacePhoto != null) map["hasIdFacePhoto"] = true
         if (chip.nameImage != null) map["hasDocumentFrontImage"] = true
+        if (chip.addressImage != null) map["hasAddressImage"] = true
 
         return map
     }

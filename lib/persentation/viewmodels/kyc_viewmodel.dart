@@ -1,18 +1,30 @@
 import 'package:flutter/foundation.dart';
 import '../../core/constant/liquid_constants.dart';
 import '../../core/services/app_logger.dart';
+import '../../core/services/chip_attempt_guard.dart';
 import '../../data/models/kyc_result.dart';
 import '../../data/models/document_result.dart';
 import '../../data/models/face_results.dart';
 import '../../data/models/chip_result.dart';
 import '../../data/repositories/kyc_repository.dart';
+import '../../data/models/ic_card_info_response.dart';
+import '../../data/models/liveness_images_response.dart';
+import '../../data/models/ocr_results_response.dart';
+import '../../data/models/photos_response.dart';
+import '../../data/models/verification_results_response.dart';
 import '../../data/services/kyc_be_api.dart';
+import '../../data/services/kyc_be_data_service.dart';
+import '../../data/services/kyc_credentials_service.dart';
+import '../../data/services/kyc_verification_runner.dart';
 import '../../data/services/kyc_retry_queue.dart';
 import '../../data/services/kyc_queue_worker.dart';
 
 class KycViewModel extends ChangeNotifier {
   final KycRepository _repository;
   final KycBeApi _beApi = KycBeApi();
+  late final KycCredentialsService _credentialsService;
+  late final KycBeDataService _beDataService;
+  late final KycVerificationRunner _verificationRunner;
 
   void _log(String message) {
     if (kDebugMode) {
@@ -28,7 +40,11 @@ class KycViewModel extends ChangeNotifier {
       _isFetchingBeData = isLoading;
       notifyListeners();
     };
-    
+
+    _credentialsService = KycCredentialsService(beApi: _beApi);
+    _beDataService = KycBeDataService(beApi: _beApi);
+    _verificationRunner = KycVerificationRunner(repository: _repository);
+
     _initQueue();
     _initSdk();
     if (LiquidConfig.applicantId.isNotEmpty && LiquidConfig.token.isNotEmpty) {
@@ -42,6 +58,7 @@ class KycViewModel extends ChangeNotifier {
 
   Future<void> _initQueue() async {
     await KycRetryQueue.init();
+    await ChipAttemptGuard.init();
     KycQueueWorker.initialize(
       onRetryComplete: (endpoint, success, error) {
         _log('Queue retry ${success ? "SUCCESS" : "FAILED"}: $endpoint');
@@ -67,13 +84,11 @@ class KycViewModel extends ChangeNotifier {
   ChipVerificationResult? _chipVerificationResult;
   ChipIdentificationResult? _chipIdentificationResult;
   OcrResult? _ocrResult;
-  ICCardInfoResponse? _beICCardInfo;
-  VerificationResultsResponse? _beVerificationResults;
-  OcrResultsBeResponse? _beOcrResults;
-  PhotosResponse? _bePhotos;
-  LivenessImagesResponse? _beLivenessImages;
   bool _isRegisterApplicationInfoSuccess = false;
   String? _errorMessage;
+
+  /// Error terakhir bisa bikin kartu fisik terkunci (chip My Number Card).
+  bool _cardLockRisk = false;
   bool _isLoading = false;
   bool _isFetchingBeData = false;  // Track BE API loading
   String _currentProgressStep = '';  // Current step being processed
@@ -82,6 +97,13 @@ class KycViewModel extends ChangeNotifier {
   String _language = 'AUTO';
   String _buttonColor = '#000000';
 
+  // Data dari Connector API (BE)
+  ICCardInfoResponse? beICCardInfo;
+  VerificationResultsResponse? beVerificationResults;
+  OcrResultsBeResponse? beOcrResults;
+  PhotosResponse? bePhotos;
+  LivenessImagesResponse? beLivenessImages;
+
   KycStep get currentStep => _currentStep;
   KycResult? get lastResult => _lastResult;
   DocumentResult? get documentResult => _documentResult;
@@ -89,18 +111,11 @@ class KycViewModel extends ChangeNotifier {
   ChipVerificationResult? get chipVerificationResult => _chipVerificationResult;
   ChipIdentificationResult? get chipIdentificationResult => _chipIdentificationResult;
   OcrResult? get ocrResult => _ocrResult;
-  ICCardInfoResponse? get beICCardInfo => _beICCardInfo;
-  set beICCardInfo(ICCardInfoResponse? value) => _beICCardInfo = value;
-  VerificationResultsResponse? get beVerificationResults => _beVerificationResults;
-  set beVerificationResults(VerificationResultsResponse? value) => _beVerificationResults = value;
-  OcrResultsBeResponse? get beOcrResults => _beOcrResults;
-  set beOcrResults(OcrResultsBeResponse? value) => _beOcrResults = value;
-  PhotosResponse? get bePhotos => _bePhotos;
-  set bePhotos(PhotosResponse? value) => _bePhotos = value;
-  LivenessImagesResponse? get beLivenessImages => _beLivenessImages;
-  set beLivenessImages(LivenessImagesResponse? value) => _beLivenessImages = value;
   bool get isRegisterApplicationInfoSuccess => _isRegisterApplicationInfoSuccess;
   String? get errorMessage => _errorMessage;
+
+  /// true kalau error terakhir berpotensi mengunci kartu fisik.
+  bool get cardLockRisk => _cardLockRisk;
   bool get isLoading => _isLoading;
   bool get isFetchingBeData => _isFetchingBeData;
   String get currentProgressStep => _currentProgressStep;
@@ -242,54 +257,34 @@ class KycViewModel extends ChangeNotifier {
     String? phoneNumber,
     String? email,
   }) async {
-    final targetApplicantId = applicantId ?? LiquidConfig.applicantId;
     _log('===== FETCH CREDENTIALS FROM BE =====');
-    _log('ApplicantId: $targetApplicantId');
-    _log('BE URL: ${beBaseUrl ?? LiquidConfig.url}');
     _isLoading = true;
     notifyListeners();
 
     try {
-      // Step 1: Get token dari BE
-      _log('[STEP 1] Requesting token from BE...');
-      final tokenResponse = await _beApi.applyForSdkToken(
-        applicantId: targetApplicantId,
+      final credentials = await _credentialsService.fetch(
+        applicantId: applicantId,
+        beBaseUrl: beBaseUrl,
+        applicantName: applicantName,
+        dateOfBirth: dateOfBirth,
+        address: address,
+        phoneNumber: phoneNumber,
+        email: email,
       );
 
-      if (tokenResponse?.isSuccess != true || tokenResponse?.token == null) {
+      if (!credentials.isSuccess) {
         _isLoading = false;
-        _errorMessage = tokenResponse?.errorMessage ?? 'Failed to get token from BE';
-        _log('[ERROR] Failed to get token: $_errorMessage');
+        _errorMessage = credentials.errorMessage;
+        _log('[ERROR] ${credentials.errorMessage}');
         notifyListeners();
         return false;
       }
 
-      _log('[OK] Token received from BE');
-      _log('Token: ${tokenResponse!.token}');
-
       setCredentials(
-        applicantId: tokenResponse.applicantId ?? targetApplicantId,
-        token: tokenResponse.token!,
-        sdkUrl: beBaseUrl ?? LiquidConfig.url,
+        applicantId: credentials.applicantId,
+        token: credentials.token,
+        sdkUrl: credentials.sdkUrl,
       );
-
-      // Step 2: Register applicant info ke BE
-      _log('[STEP 2] Registering applicant info to BE...');
-      final registerResponse = await _beApi.registerApplicantInfo(
-        applicantId: tokenResponse.applicantId ?? targetApplicantId,
-        applicantName: applicantName ?? 'TARO YAMADA',
-        dateOfBirth: dateOfBirth ?? '1990-05-15',
-        address: address ?? 'Tokyo-to, Chiyoda-ku, Marunouchi 1-1-1',
-        phoneNumber: phoneNumber ?? '08123456789',
-        email: email ?? 'taro.yamada@example.com',
-      );
-
-      if (registerResponse?.isSuccess == true) {
-        _log('[OK] Applicant registered: ${registerResponse!.applicationId}');
-      } else {
-        _log('[WARN] Failed to register applicant info (optional step)');
-        _log('Error: ${registerResponse?.errorMessage}');
-      }
 
       _isLoading = false;
       _log('Credentials saved to ViewModel');
@@ -311,25 +306,27 @@ class KycViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _beApi.applyNewApplicant();
+      final credentials = await _credentialsService.createNewApplicant(
+        beBaseUrl: beBaseUrl,
+      );
 
-      _isLoading = false;
-
-      if (response?.isSuccess == true && response?.token != null) {
-        setCredentials(
-          applicantId: response!.applicantId ?? '',
-          token: response.token!,
-          sdkUrl: beBaseUrl ?? LiquidConfig.url,
-        );
-        _log('New applicant created successfully - ID: ${response.applicantId}');
-        notifyListeners();
-        return true;
-      } else {
-        _errorMessage = response?.errorMessage ?? 'Failed to create applicant';
-        _log('Failed to create applicant: $_errorMessage');
+      if (!credentials.isSuccess) {
+        _isLoading = false;
+        _errorMessage = credentials.errorMessage;
+        _log('Failed to create applicant: ${credentials.errorMessage}');
         notifyListeners();
         return false;
       }
+
+      setCredentials(
+        applicantId: credentials.applicantId,
+        token: credentials.token,
+        sdkUrl: credentials.sdkUrl,
+      );
+
+      _isLoading = false;
+      notifyListeners();
+      return true;
     } catch (e) {
       _isLoading = false;
       _errorMessage = 'Error creating applicant: $e';
@@ -342,9 +339,7 @@ class KycViewModel extends ChangeNotifier {
   void _updateDocumentTypeForMethod() {
     switch (_selectedMethod) {
       case VerificationMethod.complyHe:
-      case VerificationMethod.read:
-      case VerificationMethod.readFace:
-if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
+        if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
             _selectedDocumentType == LiquidDocumentType.myNumberCard ||
             _selectedDocumentType == LiquidDocumentType.myNumberCardWithMyNumber ||
             _selectedDocumentType == LiquidDocumentType.myNumberCardIntegratedDriverLicense ||
@@ -358,8 +353,6 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
           // Fall back to residence card for unsupported types (project default)
           _selectedDocumentType = LiquidDocumentType.defaultType;
         }
-        break;
-      default:
         break;
     }
   }
@@ -493,103 +486,34 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
     }
     _log('[STEP 10] Terms → SUCCESS | accepted');
 
-    // Get verification order based on method
-    // COMPLY_HE: IC Card → Face (NO document scan per SDK specs)
-    final verificationOrder = _selectedMethod.verificationOrder;
-    _log('[STEP 11] Verify order: $verificationOrder | doc:${_selectedDocumentType.value}');
-
-    int stepNum = 11;
-    for (final step in verificationOrder) {
-      if (step == 'icCard') {
-        _log('[STEP $stepNum] IC Card (NFC) → STARTING...');
-        _currentStep = KycStep.icCardRead;
+    // Verifikasi inti: IC chip → document → face (urutan dari method)
+    final outcome = await _verificationRunner.run(
+      method: _selectedMethod,
+      documentType: _selectedDocumentType,
+      faceType: _selectedFaceType,
+      currentOcrResult: _ocrResult,
+      onStep: (step) {
+        _currentStep = step;
         notifyListeners();
+      },
+      onChipVerified: _checkDocumentTypeMatch,
+    );
 
-        _chipVerificationResult = await _repository.verifyIdChip(
-          documentType: _selectedDocumentType,
-          verificationMethod: _selectedMethod,
-        );
+    _chipVerificationResult = outcome.chipResult ?? _chipVerificationResult;
+    _documentResult = outcome.documentResult ?? _documentResult;
+    _faceResult = outcome.faceResult ?? _faceResult;
+    _ocrResult = outcome.ocrResult ?? _ocrResult;
 
-        if (!_chipVerificationResult!.isSuccess) {
-          final errMsg = _chipVerificationResult!.userFriendlyMessage;
-          _log('[STEP $stepNum] IC Card (NFC) → FAILED | code:${_chipVerificationResult!.errorCode} | msg:$errMsg');
-          appLogger.e('[STEP $stepNum] IC Card (NFC) → FAILED | code:${_chipVerificationResult!.errorCode} | msg:$errMsg');
-          _currentStep = KycStep.error;
-          _errorMessage = errMsg;
-          _isLoading = false;
-          notifyListeners();
-          return KycResult.error(errorCode: 'CHIP_ERROR', message: _errorMessage);
-        }
-        _log('[STEP $stepNum] IC Card (NFC) → SUCCESS');
-
-        _checkDocumentTypeMatch();
-
-        // ========================================
-        // [SDK] Get OCR Results for quick preview
-        // Called after IC chip verification for instant display
-        // ========================================
-        if (_ocrResult == null) {
-          _log('[SDK] Calling getOcrResults() for quick preview...');
-          appLogger.i('[SDK] Calling getOcrResults()...');
-          _ocrResult = await _repository.getOcrResults();
-          if (_ocrResult != null && _ocrResult!.name != null) {
-            _log('[SDK] getOcrResults → SUCCESS | name:${_ocrResult!.name}');
-            appLogger.i('[SDK] getOcrResults → SUCCESS');
-          } else {
-            _log('[SDK] getOcrResults → returned null/empty');
-            appLogger.w('[SDK] getOcrResults → null or empty');
-          }
-        }
-      }
-
-      if (step == 'document') {
-        _log('[STEP $stepNum] Document Scan (OCR) → STARTING...');
-        _currentStep = KycStep.documentScan;
-        notifyListeners();
-
-        _documentResult = await _repository.verifyDocument(
-          documentType: _selectedDocumentType,
-          verificationMethod: _selectedMethod,
-        );
-
-        if (!_documentResult!.isSuccess) {
-          final errMsg = _documentResult!.userFriendlyMessage;
-          _log('[STEP $stepNum] Document Scan (OCR) → FAILED | code:${_documentResult!.errorCode} | msg:$errMsg');
-          appLogger.e('[STEP $stepNum] Document Scan (OCR) → FAILED | code:${_documentResult!.errorCode} | msg:$errMsg');
-          _currentStep = KycStep.error;
-          _errorMessage = errMsg;
-          _isLoading = false;
-          notifyListeners();
-          return KycResult.error(errorCode: 'DOCUMENT_ERROR', message: _errorMessage);
-        }
-        _log('[STEP $stepNum] Document Scan (OCR) → SUCCESS');
-
-        _ocrResult = await _repository.getOcrResults();
-        _log('[STEP $stepNum] OCR data extracted → name:${_ocrResult?.name ?? "N/A"}');
-      }
-
-      if (step == 'face') {
-        _log('[STEP $stepNum] Face Verify → STARTING...');
-        _currentStep = KycStep.faceScan;
-        notifyListeners();
-
-        _faceResult = await _repository.verifyFace(
-          faceVerificationType: _selectedFaceType,
-        );
-
-        if (!_faceResult!.isSuccess) {
-          final errMsg = _faceResult!.userFriendlyMessage;
-          _log('[STEP $stepNum] Face Verify → FAILED | code:${_faceResult!.errorCode} | msg:$errMsg');
-          appLogger.e('[STEP $stepNum] Face Verify → FAILED | code:${_faceResult!.errorCode} | msg:$errMsg');
-          _currentStep = KycStep.error;
-          _errorMessage = errMsg;
-          _isLoading = false;
-          notifyListeners();
-          return KycResult.error(errorCode: 'FACE_ERROR', message: _errorMessage);
-        }
-        _log('[STEP $stepNum] Face Verify → SUCCESS | autoVerify:${_faceResult!.autoVerificationResult?.result.name ?? "N/A"}');
-      }
-      stepNum++;
+    if (!outcome.isSuccess) {
+      _currentStep = KycStep.error;
+      _errorMessage = outcome.errorMessage;
+      _cardLockRisk = outcome.cardLockRisk;
+      _isLoading = false;
+      notifyListeners();
+      return KycResult.error(
+        errorCode: outcome.errorCode ?? 'VERIFICATION_ERROR',
+        message: _errorMessage,
+      );
     }
 
     // ========================================
@@ -597,47 +521,36 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
     // WAJIB dipanggil sebelum activate() dan sebelum API lain berfungsi
     // ========================================
     if (_dynamicApplicantId != null && !_isRegisterApplicationInfoSuccess) {
-      _log('[BE-1] Calling RegisterApplicationInfo...');
-      appLogger.i('[BE-1] Calling RegisterApplicationInfo...');
-
-      final registerResult = await _beApi.registerApplicationInfo(
+      // Urutan sumber data: chip (signed JPKI, paling otoritatif) →
+      // OCR (dipakai kalau method-nya nggak baca chip) → data BE → fallback.
+      // Tanpa OCR di tengah, flow tanpa chip (FRONT/COMPLY_TO) ngeirim
+      // data palsu ('User'/'19900101'/'Address') ke BE.
+      final registered = await _beDataService.registerApplicationInfo(
         applicantId: _dynamicApplicantId!,
         applicantName: _chipVerificationResult?.chipData?.displayName ??
-                       _beICCardInfo?.displayName ??
+                       _ocrResult?.name ??
+                       beICCardInfo?.displayName ??
                        'User',
         dateOfBirth: _chipVerificationResult?.chipData?.displayBirthday ??
-                     _beICCardInfo?.displayBirthday ??
+                     _ocrResult?.birthday ??
+                     beICCardInfo?.displayBirthday ??
                      '19900101',
         address: _chipVerificationResult?.chipData?.fullAddress ??
-                 _beICCardInfo?.fullAddress ??
+                 _ocrResult?.fullAddress ??
+                 beICCardInfo?.fullAddress ??
                  'Address',
       );
-
-      if (registerResult?.isSuccess == true) {
-        _isRegisterApplicationInfoSuccess = true;
-        _log('[BE-1] RegisterApplicationInfo → SUCCESS');
-        appLogger.i('[BE-1] RegisterApplicationInfo → SUCCESS | appId:${registerResult?.applicationId}');
-      } else {
-        _log('[BE-1] RegisterApplicationInfo → FAILED | ${registerResult?.errorMessage ?? "unknown"}');
-        appLogger.e('[BE-1] RegisterApplicationInfo → FAILED | ${registerResult?.errorMessage ?? "unknown"}');
-      }
+      _isRegisterApplicationInfoSuccess = registered;
+      _log('[BE-1] RegisterApplicationInfo → ${registered ? "SUCCESS" : "FAILED"}');
     }
 
     // ========================================
     // [STEP BE-2] Get Verification Results (Face Match Score, Liveness)
     // ========================================
-    if (_dynamicApplicantId != null && _beVerificationResults == null) {
-      _log('[BE-2] Calling getVerificationResults...');
-      appLogger.i('[BE-2] Calling getVerificationResults...');
-
-      _beVerificationResults = await _beApi.getVerificationResults(_dynamicApplicantId!);
-      if (_beVerificationResults?.isSuccess == true) {
-        _log('[BE-2] VerificationResults → SUCCESS | faceMatchScore:${_beVerificationResults?.faceMatchScore}');
-        appLogger.i('[BE-2] VerificationResults → SUCCESS | score:${_beVerificationResults?.faceMatchScore}, liveness:${_beVerificationResults?.livenessResult}');
-      } else {
-        _log('[BE-2] VerificationResults → FAILED');
-        appLogger.e('[BE-2] VerificationResults → FAILED | ${_beVerificationResults?.errorMessage}');
-      }
+    if (_dynamicApplicantId != null && beVerificationResults == null) {
+      beVerificationResults =
+          await _beDataService.fetchVerificationResults(_dynamicApplicantId!);
+      _log('[BE-2] VerificationResults → ${beVerificationResults?.isSuccess == true ? "SUCCESS" : "FAILED"}');
     }
 
     _log('[FINAL] Activate KYC → STARTING...');
@@ -651,69 +564,19 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
       _log('[FINAL] Activate KYC → SUCCESS | KYC Completed!');
       appLogger.i('[FINAL] Activate KYC → SUCCESS | KYC Completed!');
       
-      // Fetch chip data from BE if SDK didn't return it
-      if (_chipVerificationResult?.chipData == null && _dynamicApplicantId != null) {
-        _log('[BE] Fetching IC Card Info from BE...');
-        appLogger.i('[BE] Fetching IC Card Info from BE...');
-        _beICCardInfo = await _beApi.getICCardInfo(_dynamicApplicantId!);
-        if (_beICCardInfo?.isSuccess == true) {
-          appLogger.i('[BE] IC Card Info received: name=${_beICCardInfo?.name}');
-          _log('[BE] IC Card Info received from BE');
-        } else {
-          appLogger.e('[BE] Failed to get IC Card Info: ${_beICCardInfo?.errorMessage}');
-          _log('[BE] Failed to get IC Card Info');
-        }
-      }
-
       // ========================================
-      // [BE-3] Get OCR Results from BE (Official Data)
+      // [BE-3..BE-5] Ambil data resmi dari BE
       // ========================================
-      if (_dynamicApplicantId != null && _beOcrResults == null) {
-        _log('[BE-3] Calling getOcrResultsFromBe...');
-        appLogger.i('[BE-3] Calling getOcrResultsFromBe...');
+      if (_dynamicApplicantId != null) {
+        final beData = await _beDataService.fetchPostActivationData(
+          _dynamicApplicantId!,
+          includeICCardInfo: _chipVerificationResult?.chipData == null,
+        );
 
-        _beOcrResults = await _beApi.getOcrResultsFromBe(_dynamicApplicantId!);
-        if (_beOcrResults?.isSuccess == true) {
-          _log('[BE-3] getOcrResultsFromBe → SUCCESS');
-          appLogger.i('[BE-3] getOcrResultsFromBe → SUCCESS | name:${_beOcrResults?.name}');
-        } else {
-          _log('[BE-3] getOcrResultsFromBe → FAILED');
-          appLogger.e('[BE-3] getOcrResultsFromBe → FAILED | ${_beOcrResults?.errorMessage}');
-        }
-      }
-
-      // ========================================
-      // [BE-4] Get Liveness Images (Face Photos)
-      // ========================================
-      if (_dynamicApplicantId != null && _beLivenessImages == null) {
-        _log('[BE-4] Calling getLivenessImages...');
-        appLogger.i('[BE-4] Calling getLivenessImages...');
-
-        _beLivenessImages = await _beApi.getLivenessImages(_dynamicApplicantId!);
-        if (_beLivenessImages?.isSuccess == true) {
-          _log('[BE-4] getLivenessImages → SUCCESS | count:${_beLivenessImages?.livenessImages?.length ?? 0}');
-          appLogger.i('[BE-4] getLivenessImages → SUCCESS | count:${_beLivenessImages?.livenessImages?.length ?? 0}');
-        } else {
-          _log('[BE-4] getLivenessImages → FAILED');
-          appLogger.e('[BE-4] getLivenessImages → FAILED | ${_beLivenessImages?.errorMessage}');
-        }
-      }
-
-      // ========================================
-      // [BE-5] Get Document Photos
-      // ========================================
-      if (_dynamicApplicantId != null && _bePhotos == null) {
-        _log('[BE-5] Calling getPhotos...');
-        appLogger.i('[BE-5] Calling getPhotos...');
-
-        _bePhotos = await _beApi.getPhotos(_dynamicApplicantId!);
-        if (_bePhotos?.isSuccess == true) {
-          _log('[BE-5] getPhotos → SUCCESS');
-          appLogger.i('[BE-5] getPhotos → SUCCESS | docs:${_bePhotos?.idDocumentPhotos?.length ?? 0}');
-        } else {
-          _log('[BE-5] getPhotos → FAILED');
-          appLogger.e('[BE-5] getPhotos → FAILED | ${_bePhotos?.errorMessage}');
-        }
+        beICCardInfo ??= beData.icCardInfo;
+        beOcrResults ??= beData.ocrResults;
+        beLivenessImages ??= beData.livenessImages;
+        bePhotos ??= beData.photos;
       }
 
       // ========================================
@@ -721,22 +584,7 @@ if (_selectedDocumentType == LiquidDocumentType.driverLicense ||
       // Optional - untuk trigger auto-masking
       // ========================================
       if (_dynamicApplicantId != null && _isRegisterApplicationInfoSuccess) {
-        _log('[BE-6] Calling registerKycResult...');
-        appLogger.i('[BE-6] Calling registerKycResult...');
-
-        final kycRegistered = await _beApi.registerKycResult(
-          applicantId: _dynamicApplicantId!,
-          kycResult: '0',  // 0 = OK, 1 = NG
-          hasSensitiveInfo: true,  // Set true untuk trigger masking
-        );
-
-if (kycRegistered) {
-          _log('[BE-6] registerKycResult → SUCCESS');
-          appLogger.i('[BE-6] registerKycResult → SUCCESS');
-        } else {
-          _log('[BE-6] registerKycResult → FAILED');
-          _log('[BE-6] registerKycResult → FAILED (non-critical)');
-        }
+        await _beDataService.registerKycResult(_dynamicApplicantId!);
       }
 
       // Reset progress state after all BE API calls done
@@ -832,6 +680,7 @@ if (kycRegistered) {
     _chipIdentificationResult = null;
     _ocrResult = null;
     _errorMessage = null;
+    _cardLockRisk = false;
     _isLoading = false;
     notifyListeners();
   }

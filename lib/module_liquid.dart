@@ -1,5 +1,3 @@
-library module_liquid;
-
 // --- 1. Entry Point Widget ---
 // Widget utama yang akan dipanggil oleh project utama
 export 'app/app.dart';

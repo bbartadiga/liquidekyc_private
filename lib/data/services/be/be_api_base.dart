@@ -1,0 +1,242 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+
+import '../../../core/constant/liquid_constants.dart';
+import '../kyc_retry_queue.dart';
+import '../liquid_http_client.dart';
+import 'be_api_config.dart';
+
+typedef ProgressCallback = void Function(String step, bool isLoading);
+
+/// Parser body response 2xx jadi model domain.
+typedef BeResponseParser<T> = T Function(Map<String, dynamic> data);
+
+/// Penulis model error dari status code + body response.
+typedef BeErrorFactory<T> = T Function(int statusCode, String message);
+
+/// Penentu hasil sukses untuk endpoint yang response body-nya opsional.
+typedef BeSuccessHandler<T> = T Function(http.Response response);
+
+/// Plumbing bersama semua endpoint Liquid Connector API (BE).
+///
+/// Tiap subclass cuma memegang endpoint domain-nya; base ini yang pegang
+/// config host, header auth, retry/backoff, dan antrean retry offline.
+abstract class BeApiBase {
+  ProgressCallback? onProgress;
+
+  final http.Client _client;
+  final Random _random = Random();
+
+  BeApiBase({http.Client? client}) : _client = client ?? LiquidHttpClient();
+
+  // Host + API key mengikuti LiquidConfig (staging / production switch)
+  String get baseUrl => beBaseUrl;
+
+  String applicantUrl(String applicantId, String subPath) =>
+      '$baseUrl$bePathApplicants/$applicantId/$subPath';
+
+  /// Path relatif untuk disimpan di retry queue (tanpa host).
+  String relativeApplicantPath(String applicantId, String subPath) =>
+      '$bePathApplicants/$applicantId/$subPath';
+
+  Map<String, String> get headers => {
+        'Content-Type': 'application/json',
+        'X-Ekyc-Api-key': LiquidConfig.connectorApiKey,
+      };
+
+  void log(String message) {
+    if (kDebugMode) {
+      debugPrint('[KycBeApi] $message');
+    }
+  }
+
+  Future<http.Response> sendGet(String url) => _client
+      .get(Uri.parse(url), headers: headers)
+      .timeout(beRequestTimeout);
+
+  Future<http.Response> sendPost(String url, Map<String, dynamic> body) => _client
+      .post(Uri.parse(url), headers: headers, body: jsonEncode(body))
+      .timeout(beRequestTimeout);
+
+  /// Simpan request gagal ke retry queue supaya dikirim ulang nanti.
+  Future<void> enqueueFailedRequest({
+    required String applicantId,
+    required String endpoint,
+    required String method,
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final request = KycQueuedRequest(
+        applicantId: applicantId,
+        endpoint: endpoint,
+        method: method,
+        body: body,
+      );
+
+      await KycRetryQueue.enqueue(request);
+      log('Enqueued failed request: $method $endpoint');
+    } catch (e) {
+      log('Failed to enqueue request: $e');
+    }
+  }
+
+  /// GET sub-resource applicant dengan retry exponential backoff + jitter.
+  ///
+  /// Kalau seluruh percobaan gagal, request diantrekan ke [KycRetryQueue]
+  /// lalu fungsi mengembalikan model error (bukan exception).
+  Future<T> getWithRetry<T>({
+    required String applicantId,
+    required String url,
+    required String endpoint,
+    required String progressLabel,
+    required BeResponseParser<T> parse,
+    required BeErrorFactory<T> errorFactory,
+    String Function(Map<String, dynamic> data)? successLog,
+  }) async {
+    var attempt = 0;
+    var delayMs = beBaseRetryDelayMs;
+
+    while (attempt <= beMaxRetries) {
+      try {
+        onProgress?.call('$progressLabel (attempt ${attempt + 1})', true);
+
+        final response = await sendGet(url);
+
+        log('Response status: ${response.statusCode}');
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final message = successLog?.call(data);
+          if (message != null) log(message);
+          onProgress?.call(progressLabel, false);
+          return parse(data);
+        }
+
+        log('ERROR: ${response.statusCode} - ${response.body}');
+
+        if (attempt < beMaxRetries) {
+          await _waitBeforeRetry(delayMs);
+          delayMs *= 2;
+          attempt++;
+          continue;
+        }
+
+        await enqueueFailedRequest(
+          applicantId: applicantId,
+          endpoint: endpoint,
+          method: 'GET',
+        );
+
+        onProgress?.call(progressLabel, false);
+        return errorFactory(response.statusCode, response.body);
+      } catch (e) {
+        log('ERROR (attempt ${attempt + 1}): $e');
+
+        if (attempt < beMaxRetries) {
+          await _waitBeforeRetry(delayMs);
+          delayMs *= 2;
+          attempt++;
+        } else {
+          onProgress?.call(progressLabel, false);
+
+          await enqueueFailedRequest(
+            applicantId: applicantId,
+            endpoint: endpoint,
+            method: 'GET',
+          );
+
+          return errorFactory(0, e.toString());
+        }
+      }
+    }
+
+    onProgress?.call(progressLabel, false);
+    return errorFactory(0, 'Failed after retries');
+  }
+
+  /// POST dengan retry exponential backoff + jitter.
+  ///
+  /// Sama seperti [getWithRetry]: request gagal total diantrekan ke
+  /// [KycRetryQueue] dan fungsi mengembalikan model error. Body response
+  /// belum tentu berisi JSON, jadi parsing diserahkan ke [onSuccess].
+  Future<T> postWithRetry<T>({
+    required String applicantId,
+    required String url,
+    required String endpoint,
+    required String progressLabel,
+    required Map<String, dynamic> body,
+    required BeSuccessHandler<T> onSuccess,
+    required BeErrorFactory<T> errorFactory,
+    String Function(http.Response response)? successLog,
+  }) async {
+    var attempt = 0;
+    var delayMs = beBaseRetryDelayMs;
+
+    while (attempt <= beMaxRetries) {
+      try {
+        onProgress?.call('$progressLabel (attempt ${attempt + 1})', true);
+
+        final response = await sendPost(url, body);
+
+        log('Response status: ${response.statusCode}');
+
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          final message = successLog?.call(response);
+          if (message != null) log(message);
+          onProgress?.call(progressLabel, false);
+          return onSuccess(response);
+        }
+
+        log('ERROR: ${response.statusCode} - ${response.body}');
+
+        if (attempt < beMaxRetries) {
+          await _waitBeforeRetry(delayMs);
+          delayMs *= 2;
+          attempt++;
+          continue;
+        }
+
+        await enqueueFailedRequest(
+          applicantId: applicantId,
+          endpoint: endpoint,
+          method: 'POST',
+          body: body,
+        );
+
+        onProgress?.call(progressLabel, false);
+        return errorFactory(response.statusCode, response.body);
+      } catch (e) {
+        log('ERROR (attempt ${attempt + 1}): $e');
+
+        if (attempt < beMaxRetries) {
+          await _waitBeforeRetry(delayMs);
+          delayMs *= 2;
+          attempt++;
+        } else {
+          onProgress?.call(progressLabel, false);
+
+          await enqueueFailedRequest(
+            applicantId: applicantId,
+            endpoint: endpoint,
+            method: 'POST',
+            body: body,
+          );
+
+          return errorFactory(0, e.toString());
+        }
+      }
+    }
+
+    onProgress?.call(progressLabel, false);
+    return errorFactory(0, 'Failed after retries');
+  }
+
+  /// Tunggu backoff + jitter acak supaya retry tidak menumpuk bareng.
+  Future<void> _waitBeforeRetry(int delayMs) async {
+    log('Retrying in ${delayMs}ms...');
+    await Future.delayed(Duration(milliseconds: delayMs + _random.nextInt(500)));
+  }
+}

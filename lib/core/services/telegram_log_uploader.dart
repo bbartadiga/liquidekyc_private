@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'app_logger.dart';
+import 'log_sanitizer.dart';
 
 class TelegramLogUploader {
   // TODO(poc): move ke env vars (.env/secrets) sebelum production
@@ -15,42 +16,22 @@ class TelegramLogUploader {
   static const Duration _httpTimeout = Duration(seconds: 5);
   static const int _maxStackLength = 400;
 
-  static const Set<String> _sensitiveKeys = {
-    'name', 'name_kana', 'nameKana',
-    'full_name', 'fullName',
-    'previous_name', 'previousName', 'former_name', 'formerName',
-    'birthday', 'dateOfBirth', 'date_of_birth',
-    'address', 'full_address', 'fullAddress',
-    'address_pref', 'addressPref', 'addressPrefecture',
-    'address_city', 'addressCity',
-    'address_other', 'addressOther',
-    'zipCode', 'zip_code',
-    'id_number', 'idNumber', 'id_document_number',
-    'nationality',
-    'my_number', 'myNumber',
-    'serialNumber', 'municipalityName',
-    'resident_status', 'residentStatus',
-    'stay_period', 'stayPeriod',
-    'phoneNumber', 'phone_number',
-    'email', 'mailAddress',
-    'idFacePhoto', 'id_face_photo', 'face_photo',
-    'documentImage', 'document_image',
-    // Auth credentials
-    'token', 'access_token', 'refresh_token',
-    'x-api-key', 'x_ekyc_api_key', 'X-Ekyc-Api-key',
-    'api_key', 'apikey', 'apiKey',
-    'authorization', 'Authorization',
-    'password', 'secret',
-  };
-
   static const Set<String> _uploadLevels = {'DEBUG', 'WARNING', 'ERROR', 'INFO'};
 
+  /// Tag log dari sisi native (Liquid SDK).
+  static const String _nativeTag = 'Native';
+
+  /// Maksimal log native per batch Telegram.
+  ///
+  /// Log native ikut dikirim (biar diagnosa SDK ikut terkirim), tapi dibatasi
+  /// supaya nggak menimpa log aplikasi yang lebih penting.
+  static const int _maxNativePerBatch = 8;
+
   static StreamSubscription<List<LogEntry>>? _subscription;
-  static int _lastSeenIndex = 0;
   static bool _enabled = true;
   static DateTime _lastSentAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static int _minIntervalMs = 500;
-  static int _maxBatchSize = 30;
+  static final int _minIntervalMs = 500;
+  static final int _maxBatchSize = 30;
   static LogLevel _minLevel = LogLevel.warning;
 
   static bool get enabled => _enabled;
@@ -78,12 +59,20 @@ class TelegramLogUploader {
 
     // Stream emit all logs reversed (newest first)
     final newOnes = <LogEntry>[];
+    final nativeOnes = <LogEntry>[];
     for (final entry in allLogs) {
       if (entry.level.priority >= _minLevel.priority &&
           _uploadLevels.contains(entry.level.label)) {
-        newOnes.add(entry);
+        if (entry.tag == _nativeTag) {
+          nativeOnes.add(entry);
+        } else {
+          newOnes.add(entry);
+        }
       }
     }
+
+    // Log native ikut, tapi dibatasi — jangan sampai nutup log aplikasi.
+    newOnes.addAll(nativeOnes.take(_maxNativePerBatch));
 
     if (newOnes.isEmpty) return;
 
@@ -91,7 +80,6 @@ class TelegramLogUploader {
     Future.delayed(Duration(milliseconds: _minIntervalMs), () {
       _sendBatch(newOnes.take(_maxBatchSize).toList());
     });
-    _lastSeenIndex = allLogs.length;
   }
 
   static Future<void> _sendBatch(List<LogEntry> entries) async {
@@ -128,12 +116,12 @@ class TelegramLogUploader {
 
     for (final entry in entries) {
       final tag = entry.tag ?? '-';
-      final msg = _sanitize(entry.message);
+      final msg = LogSanitizer.sanitize(entry.message);
       buffer.writeln(
           '<b>[${entry.level.label}]</b> [${_escape(tag)}] ${_escape(msg)}');
       if (entry.error != null) {
         final errStr = entry.error.toString();
-        final cleaned = _sanitize(errStr);
+        final cleaned = LogSanitizer.sanitize(errStr);
         buffer.writeln(
             '• Err: <code>${_escape(cleaned.substring(0, min(cleaned.length, 250)))}</code>');
       }
@@ -147,7 +135,7 @@ class TelegramLogUploader {
     final text = buffer.toString();
     if (text.length > 3800) {
       // Truncate kalau kelebihan (Telegram limit 4096)
-      await _postToTelegram(text.substring(0, 3800) + '\n\n…(truncated)');
+      await _postToTelegram('${text.substring(0, 3800)}\n\n…(truncated)');
     } else {
       await _postToTelegram(text);
     }
@@ -180,38 +168,6 @@ class TelegramLogUploader {
     } catch (e) {
       debugPrint('[TelegramLogUploader] Failed: $e');
     }
-  }
-
-  /// Mask sensitive data dari text sebelum dikirim.
-  static String _sanitize(String text) {
-    if (text.isEmpty) return text;
-    String out = text;
-
-    // Email
-    out = out.replaceAllMapped(
-      RegExp(r'[\w._%+-]+@[\w.-]+\.[A-Za-z]{2,}'),
-      (m) => '***@***',
-    );
-
-    // Panjang digit sequence (cards, MyNumber)
-    out = out.replaceAllMapped(
-      RegExp(r'\b\d{12,}\b'),
-      (m) => '****',
-    );
-
-    // Sensitive key=value patterns
-    for (final key in _sensitiveKeys) {
-      out = out.replaceAllMapped(
-        RegExp('"$key"\\s*:\\s*"[^"]*"', caseSensitive: false),
-        (m) => '"$key":"***"',
-      );
-      out = out.replaceAllMapped(
-        RegExp('$key\\s*[:=]\\s*([^,\\s}]+)', caseSensitive: false),
-        (m) => '$key=***',
-      );
-    }
-
-    return out;
   }
 
   static String _escape(String s) {

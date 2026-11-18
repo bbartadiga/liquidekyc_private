@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constant/liquid_constants.dart';
 import '../../../core/services/app_logger.dart';
 import '../../../data/services/kyc_be_api.dart';
 import '../../../data/services/kyc_queue_worker.dart';
 import '../../viewmodels/kyc_viewmodel.dart';
+import '../widgets/kyc_be_loading_dialog.dart';
 import '../widgets/kyc_loading_overlay.dart';
 import 'kyc_result_screen.dart';
 
 class KycHomeScreen extends StatefulWidget {
-  KycHomeScreen({super.key});
+  const KycHomeScreen({super.key});
 
   @override
   State<KycHomeScreen> createState() => _KycHomeScreenState();
@@ -354,20 +354,14 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
 
   void _onStartVerification(BuildContext context, KycViewModel viewModel) async {
     String applicantId = _applicantIdController.text.trim();
-    
+
     if (applicantId.isEmpty) {
       _showInputDialog(context, viewModel);
       return;
     }
-    if (applicantId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Masukkan Applicant ID'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
+
+    // Ambil sebelum await — context ga boleh dipakai ulang setelah async gap
+    final messenger = ScaffoldMessenger.of(context);
 
     setState(() => _isLoading = true);
     FocusScope.of(context).unfocus();
@@ -375,13 +369,13 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     try {
       debugPrint('[STEP 1] User clicked "Ambil Token & Mulai"');
       debugPrint('  applicantId: $applicantId');
-      debugPrint('  BYPASS_BE: ${LiquidConfig.BYPASS_BE}');
+      debugPrint('  BYPASS_BE: ${LiquidConfig.bypassBe}');
       appLogger.i('[STEP 1] User clicked "Ambil Token & Mulai"');
       appLogger.i('  applicantId: $applicantId');
-      appLogger.i('  BYPASS_BE: ${LiquidConfig.BYPASS_BE}');
+      appLogger.i('  BYPASS_BE: ${LiquidConfig.bypassBe}');
 
       // BYPASS_BE = true → skip BE, use hardcoded credentials
-      if (LiquidConfig.BYPASS_BE) {
+      if (LiquidConfig.bypassBe) {
         debugPrint('[STEP 2-4] BYPASS_BE=true - using hardcoded credentials');
         appLogger.i('[STEP 2-4] BYPASS_BE=true - using hardcoded credentials');
 
@@ -433,20 +427,22 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
         debugPrint('[STEP 4] Credentials saved to ViewModel');
         appLogger.i('[STEP 4] Credentials saved to ViewModel');
 
+        if (!context.mounted) return;
         setState(() => _isLoading = false);
         _navigateToKycFlow(context, viewModel);
       } else {
+        if (!context.mounted) return;
         setState(() => _isLoading = false);
 
         final bool beUnavailable = (response?.errorMessage?.contains('No route to host') ?? false) ||
                                    (response?.errorMessage?.contains('SocketException') ?? false);
 
-        if (beUnavailable && LiquidConfig.BYPASS_BE) {
+        if (beUnavailable && LiquidConfig.bypassBe) {
           debugPrint('[STEP 1-3] BE unavailable - BYPASS_BE=true, using hardcoded');
           debugPrint('  Using hardcoded credentials');
           appLogger.i('[STEP 1-3] BE unavailable - BYPASS_BE=true, using hardcoded');
           appLogger.i('  Using hardcoded credentials');
-          ScaffoldMessenger.of(context).showSnackBar(
+          messenger.showSnackBar(
             const SnackBar(
               content: Text('BE unreachable - using hardcoded credentials'),
               backgroundColor: Colors.orange,
@@ -466,7 +462,7 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
         debugPrint('  Error: ${response?.errorMessage ?? "unknown"}');
         appLogger.e('[STEP 1-3] BE call FAILED');
         appLogger.e('  Error: ${response?.errorMessage ?? "unknown"}');
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(
             content: Text(response?.errorMessage ?? 'Gagal mendapat token'),
             backgroundColor: Colors.red,
@@ -474,6 +470,7 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
         );
       }
     } catch (e) {
+      if (!context.mounted) return;
       setState(() => _isLoading = false);
 
       final errorStr = e.toString();
@@ -482,15 +479,15 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
       final bool beUnavailable = errorStr.contains('No route to host') || 
                                  errorStr.contains('SocketException');
 
-      debugPrint('[STEP 1-3] beUnavailable=$beUnavailable, BYPASS_BE=${LiquidConfig.BYPASS_BE}');
-      appLogger.i('  beUnavailable=$beUnavailable, BYPASS_BE=${LiquidConfig.BYPASS_BE}');
+      debugPrint('[STEP 1-3] beUnavailable=$beUnavailable, BYPASS_BE=${LiquidConfig.bypassBe}');
+      appLogger.i('  beUnavailable=$beUnavailable, BYPASS_BE=${LiquidConfig.bypassBe}');
 
-      if (beUnavailable && LiquidConfig.BYPASS_BE) {
+      if (beUnavailable && LiquidConfig.bypassBe) {
         debugPrint('[STEP 1-3] BE unavailable - BYPASS_BE=true, using hardcoded');
         debugPrint('  Using hardcoded credentials');
         appLogger.i('[STEP 1-3] BE unavailable - BYPASS_BE=true, using hardcoded');
         appLogger.i('  Using hardcoded credentials');
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('BE unreachable - using hardcoded credentials'),
             backgroundColor: Colors.orange,
@@ -508,13 +505,67 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
 
       debugPrint('[STEP 1-3] Error: $e');
       appLogger.e('[STEP 1-3] Error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text('Error: $e'),
           backgroundColor: Colors.red,
         ),
       );
     }
+  }
+
+  /// Dokumen yang SDK-nya nanya kredensial kartu (bisa Salah ketik).
+  bool _needsChipCredentialWarning(
+    LiquidDocumentType documentType,
+    VerificationMethod method,
+  ) {
+    // Method yang nggak baca chip (FRONT, COMPLY_TO, ...) nggak nanya
+    // kredensial sama sekali → nggak ada risiko kunci kartu.
+    if (!method.requiresIcCard) return false;
+    return documentType.value.startsWith('MY_NUMBER_CARD') ||
+        documentType == LiquidDocumentType.driverLicense;
+  }
+
+  /// Dialog pre-flight: kasih tahu user persis data apa yang diminta SDK
+  /// dan apa risikonya, sebelum kartu disentuh.
+  Future<bool> _showChipCredentialWarning(BuildContext context) async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        icon: const Icon(Icons.credit_card, color: Colors.deepOrange, size: 32),
+        title: const Text('Sebelum Mulai'),
+        content: SingleChildScrollView(
+          child: Text(
+            'SDK akan meminta data yang tertera di kartu:\n'
+            '• Tanggal lahir\n'
+            '• Tanggal berlaku\n'
+            '• Kode keamanan (4 digit kecil di pojok kartu)\n\n'
+            'Data ini dibandingkan dengan hasil baca kartu. '
+            'Kalau tidak cocok, kartu My Number Card kehilangan 1 jatah percobaan. '
+            'Setelah beberapa kali gagal, kartu terkunci dan harus dibuka '
+            'di kantor kecamatan.\n\n'
+            'Pastikan kartu terlihat jelas dan data yang diketik sama persis '
+            'dengan yang tercetak.',
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Lanjut'),
+          ),
+        ],
+      ),
+    );
+    appLogger.i(
+      '[STEP 6] Chip credential warning | proceed=$proceed',
+    );
+    return proceed ?? false;
   }
 
   void _navigateToKycFlow(BuildContext context, KycViewModel viewModel) async {
@@ -533,6 +584,17 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     // =========================================
     // PHASE 1: SDK Verification (no loading overlay yet)
     // =========================================
+
+    // Peringatan sebelum masuk flow chip: counter percobaan ada di IC chip
+    // kartu, jadi salah ketik kredensial bisa mengunci kartu beneran.
+    if (_needsChipCredentialWarning(
+      viewModel.selectedDocumentType,
+      viewModel.selectedMethod,
+    )) {
+      final proceed = await _showChipCredentialWarning(context);
+      if (!proceed) return;
+    }
+
     final result = await viewModel.startKyc();
     
     if (!context.mounted) return;
@@ -542,6 +604,22 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
       if (result.isCancelled) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Verifikasi dibatalkan')),
+        );
+      } else if (viewModel.cardLockRisk) {
+        // Risiko kunci kartu fisik → dialog, bukan snackbar yang keburu hilang.
+        await showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            icon: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 32),
+            title: const Text('Verifikasi Gagal'),
+            content: SingleChildScrollView(child: Text(viewModel.errorMessage ?? 'Verifikasi gagal')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -564,7 +642,7 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => _BeLoadingDialog(
+      builder: (dialogContext) => KycBeLoadingDialog(
         viewModel: viewModel,
         onComplete: () {
           Navigator.pop(dialogContext);
@@ -613,224 +691,3 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
 
 // =========================================
 // BE Loading Dialog with Progress
-// =========================================
-class _BeLoadingDialog extends StatefulWidget {
-  final KycViewModel viewModel;
-  final VoidCallback onComplete;
-  final Function(String) onError;
-
-  const _BeLoadingDialog({
-    required this.viewModel,
-    required this.onComplete,
-    required this.onError,
-  });
-
-  @override
-  State<_BeLoadingDialog> createState() => _BeLoadingDialogState();
-}
-
-class _BeLoadingDialogState extends State<_BeLoadingDialog> {
-  String _currentStep = 'Memproses...';
-  
-  final List<String> _beSteps = [
-    'Register App Info',
-    'Verification Results',
-    'IC Card Info',
-    'OCR Results',
-    'Liveness Images',
-    'Document Photos',
-  ];
-  
-  int _currentIndex = 0;
-  final Set<String> _completedSteps = {};
-
-  @override
-  void initState() {
-    super.initState();
-    // Set up progress listener
-    widget.viewModel.addListener(_onProgressChanged);
-    // Start fetching BE data
-    _fetchBeData();
-  }
-
-  @override
-  void dispose() {
-    widget.viewModel.removeListener(_onProgressChanged);
-    super.dispose();
-  }
-
-  void _onProgressChanged() {
-    if (!mounted) return;
-    final step = widget.viewModel.currentProgressStep;
-    final isLoading = widget.viewModel.isFetchingBeData;
-    
-    if (step.isNotEmpty) {
-      setState(() {
-        _currentStep = step;
-        if (!isLoading && !_completedSteps.contains(step)) {
-          _completedSteps.add(step);
-          _currentIndex = _beSteps.indexOf(step) + 1;
-        }
-      });
-    }
-  }
-
-  Future<void> _fetchBeData() async {
-    try {
-      // Call BE API methods with the viewModel's BE API
-      final beApi = KycBeApi();
-      
-      // Set up progress callback
-      beApi.onProgress = (step, isLoading) {
-        if (mounted) {
-          setState(() {
-            _currentStep = step;
-            if (!isLoading) {
-              _completedSteps.add(step);
-              _currentIndex = _beSteps.indexOf(step) + 1;
-            }
-          });
-        }
-      };
-
-      final applicantId = widget.viewModel.currentApplicantId;
-      if (applicantId == null) {
-        widget.onError('Applicant ID not found');
-        return;
-      }
-
-      // Fetch all BE data
-      final futures = <Future>[];
-      
-      if (widget.viewModel.beVerificationResults == null) {
-        futures.add(beApi.getVerificationResults(applicantId).then((r) {
-          widget.viewModel.beVerificationResults = r;
-        }));
-      }
-      
-      if (widget.viewModel.beOcrResults == null) {
-        futures.add(beApi.getOcrResultsFromBe(applicantId).then((r) {
-          widget.viewModel.beOcrResults = r;
-        }));
-      }
-      
-      if (widget.viewModel.beICCardInfo == null) {
-        futures.add(beApi.getICCardInfo(applicantId).then((r) {
-          widget.viewModel.beICCardInfo = r;
-        }));
-      }
-      
-      if (widget.viewModel.beLivenessImages == null) {
-        futures.add(beApi.getLivenessImages(applicantId).then((r) {
-          widget.viewModel.beLivenessImages = r;
-        }));
-      }
-      
-      if (widget.viewModel.bePhotos == null) {
-        futures.add(beApi.getPhotos(applicantId).then((r) {
-          widget.viewModel.bePhotos = r;
-        }));
-      }
-
-      // Wait for all
-      await Future.wait(futures);
-      
-      if (mounted) {
-        widget.onComplete();
-      }
-    } catch (e) {
-      if (mounted) {
-        widget.onError(e.toString());
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final progress = _completedSteps.length / _beSteps.length;
-    
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 20),
-            const Text(
-              'Mengambil Data dari Server',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _currentStep,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey.shade600,
-              ),
-            ),
-            const SizedBox(height: 20),
-            // Progress bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: LinearProgressIndicator(
-                value: progress,
-                minHeight: 8,
-                backgroundColor: Colors.grey.shade200,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '${(_completedSteps.length / _beSteps.length * 100).toInt()}%',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            // Step list
-            ...List.generate(_beSteps.length, (index) {
-              final step = _beSteps[index];
-              final isCompleted = _completedSteps.contains(step);
-              final isCurrent = _currentStep == step && !isCompleted;
-              
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      isCompleted ? Icons.check_circle : Icons.radio_button_off,
-                      size: 18,
-                      color: isCompleted 
-                          ? Colors.green 
-                          : isCurrent 
-                              ? Colors.blue 
-                              : Colors.grey,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      step,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isCompleted 
-                            ? Colors.green 
-                            : isCurrent 
-                                ? Colors.blue 
-                                : Colors.grey,
-                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
-    );
-  }
-}

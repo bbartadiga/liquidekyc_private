@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../core/services/app_logger.dart';
 import '../../core/services/http_logger.dart';
+import '../services/log_sanitizer.dart';
 
 class DebugLogScreen extends StatefulWidget {
   const DebugLogScreen({super.key});
@@ -35,17 +36,17 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
     buffer.writeln('=== LIQUID eKYC - APP LOGS ===');
     buffer.writeln('Exported: ${DateTime.now()}');
     buffer.writeln('Total: ${_appLogger.allLogs.length} entries');
-    buffer.writeln('Errors: ${_appLogger.errorCount}');
+    buffer.writeln('Errors: ${_appLogger.errorLevelCount}');
     buffer.writeln('========================================\n');
     
     for (final log in _appLogger.allLogs) {
       buffer.writeln('[${log.formattedTime}] ${log.level.label}${log.tag != null ? ' [${log.tag}]' : ''}');
-      buffer.writeln('  ${log.message}');
+      buffer.writeln('  ${LogSanitizer.sanitize(log.message)}');
       if (log.error != null) {
-        buffer.writeln('  ERROR: $log.error');
+        buffer.writeln('  ERROR: ${LogSanitizer.sanitize(log.error.toString())}');
       }
       if (log.stackTrace != null) {
-        buffer.writeln('  STACK: $log.stackTrace');
+        buffer.writeln('  STACK: ${LogSanitizer.sanitize(log.stackTrace.toString())}');
       }
       buffer.writeln('');
     }
@@ -62,10 +63,10 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
     
     for (final log in _httpLogger.getAll()) {
       buffer.writeln('[${log.startTime}]');
-      buffer.writeln('${log.method} ${log.url}');
+      buffer.writeln('${log.method} ${LogSanitizer.sanitize(log.url)}');
       buffer.writeln('Status: ${log.statusCode} | Duration: ${log.duration}ms');
       if (log.responseBody != null) {
-        buffer.writeln('Response: ${log.responseBody}');
+        buffer.writeln('Response: ${LogSanitizer.sanitize(log.responseBody!)}');
       }
       buffer.writeln('---');
       buffer.writeln('');
@@ -102,6 +103,16 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
+              // "All Logs" di paling atas — ini yang mau dikirim:
+              // APP log (termasuk log native SDK) + HTTP log, satu file.
+              ListTile(
+                leading: const Icon(Icons.all_inclusive),
+                title: const Text('All Logs (APP + HTTP + Native SDK)'),
+                subtitle: Text(
+                  '${_appLogger.allLogs.length + _httpLogger.logs.length} entries',
+                ),
+                onTap: () => Navigator.pop(ctx, 'all'),
+              ),
               ListTile(
                 leading: const Icon(Icons.description),
                 title: const Text('App Logs Only'),
@@ -113,12 +124,6 @@ class _DebugLogScreenState extends State<DebugLogScreen> with SingleTickerProvid
                 title: const Text('HTTP Logs Only'),
                 subtitle: Text('${_httpLogger.logs.length} entries'),
                 onTap: () => Navigator.pop(ctx, 'http'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.all_inclusive),
-                title: const Text('All Logs'),
-                subtitle: Text('${_appLogger.allLogs.length + _httpLogger.logs.length} entries'),
-                onTap: () => Navigator.pop(ctx, 'all'),
               ),
               const SizedBox(height: 16),
             ],

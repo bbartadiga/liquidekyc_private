@@ -18,6 +18,37 @@ Map<String, dynamic> _convertMap(dynamic source) {
 }
 
 class ChannelVerificationHandler {
+  /// Pakai title dari SDK kalau ada; fallback kalau kosong.
+  ///
+  /// SDK sering kirim title yang lebih informatif (mis. "Identification
+  /// unsuccessful"), jadi jangan ditimpa dengan teks generik kita.
+  static String _titleOrFallback(String? sdkTitle, String fallback) {
+    if (sdkTitle == null || sdkTitle.trim().isEmpty) {
+      return fallback;
+    }
+    return sdkTitle;
+  }
+
+  /// Pesan fallback saat SDK kirim error tanpa message.
+  ///
+  /// Peringatan risiko kunci kartu sengaja TIDAK ditulis di sini — itu
+  /// ditambahkan oleh [ChipVerificationResult.userFriendlyMessage] yang punya
+  /// akses ke sisa percobaan dari `chipErrorData`.
+  static String _chipFallbackMessage({
+    required LiquidDocumentType documentType,
+    required String? errorCode,
+  }) {
+    final code = errorCode ?? 'UNKNOWN';
+
+    if (documentType.value.startsWith('MY_NUMBER_CARD')) {
+      return 'Pembacaan chip My Number Card gagal (Code: $code). '
+          'Pastikan kartu menempel rata di reader NFC dan kredensial yang '
+          'dimasukkan sudah benar sebelum mencoba lagi.';
+    }
+
+    return 'IC Card scan failed (Code: $code). Please ensure NFC is enabled and card is placed correctly.';
+  }
+
   static Future<Map<String, dynamic>?> verifyIdDocument(
     LiquidEkycChannel channel, {
     required LiquidDocumentType documentType,
@@ -56,11 +87,18 @@ class ChannelVerificationHandler {
       
       final status = result?['resultStatus'] ?? 'N/A';
       final errorCode = result?['errorCode'];
+      final errorTitle = result?['additionalDataTitle']?.toString();
       final errorMsg = result?['additionalDataMessage'] ?? result?['message'];
-      
+
       channel.log('[STEP 12] RESULT - Status: $status, ErrorCode: $errorCode');
       appLogger.i('[STEP 12] RESULT - Status: $status, ErrorCode: $errorCode');
       
+      // Log detail error supaya log export cukup buat diagnosa
+      if (status != 'SUCCESS') {
+        channel.log('[STEP 12] ERROR detail | code:$errorCode | title:$errorTitle | msg:$errorMsg');
+        appLogger.i('[STEP 12] ERROR detail | code:$errorCode | title:$errorTitle | msg:$errorMsg');
+      }
+
       // Handle empty error message from SDK
       if (status == 'ERROR' && (errorMsg == null || errorMsg.toString().isEmpty)) {
         channel.log('[STEP 12] ERROR - empty message from SDK');
@@ -93,7 +131,7 @@ class ChannelVerificationHandler {
         return {
           'resultStatus': 'ERROR',
           'errorCode': errorCode ?? 'SE90003',
-          'additionalDataTitle': 'Document Scan Failed',
+          'additionalDataTitle': _titleOrFallback(errorTitle, 'Document Scan Failed'),
           'additionalDataMessage': fallbackMsg,
           'autoVerificationResult': {
             'result': 'FAIL',
@@ -160,8 +198,12 @@ class ChannelVerificationHandler {
       
       final status = result?['resultStatus'] ?? 'N/A';
       final errorCode = result?['errorCode'];
+      final errorTitle = result?['additionalDataTitle']?.toString();
       final errorMsg = result?['additionalDataMessage'] ?? result?['message'];
-      
+      final chipErrorData = result?['chipErrorData'] as Map?;
+      final attemptsRemaining = chipErrorData?['attemptsRemainingUntilChipLocked'] as int?;
+      final credentialType = chipErrorData?['credentialType'] as String?;
+
       channel.log('[STEP 11] RESULT - Status: $status, ErrorCode: $errorCode');
       appLogger.i('[STEP 11] RESULT - Status: $status, ErrorCode: $errorCode');
       
@@ -189,7 +231,7 @@ class ChannelVerificationHandler {
       // Log documentImage if present
       final docImage = result?['documentImage'];
       if (docImage != null) {
-        channel.log('[STEP 11] documentImage: present (base64 length: ${(docImage as Map)?['data']?.toString().length ?? 0})');
+        channel.log('[STEP 11] documentImage: present (base64 length: ${docImage['data']?.toString().length ?? 0})');
         appLogger.i('[STEP 11] documentImage: present');
       } else {
         channel.log('[STEP 11] documentImage: NULL');
@@ -248,19 +290,28 @@ class ChannelVerificationHandler {
       channel.log('[STEP 11] RESULT keys: ${result?.keys.toList()}');
       appLogger.i('[STEP 11] RESULT keys: ${result?.keys.toList()}');
       
+      // Log detail error supaya log export cukup buat diagnosa
+      if (status != 'SUCCESS') {
+        channel.log('[STEP 11] ERROR detail | code:$errorCode | title:$errorTitle | msg:$errorMsg | attemptsLeft:$attemptsRemaining | credential:$credentialType');
+        appLogger.i('[STEP 11] ERROR detail | code:$errorCode | title:$errorTitle | msg:$errorMsg | attemptsLeft:$attemptsRemaining | credential:$credentialType');
+      }
+
       // Handle empty error message from SDK
       if (status == 'ERROR' && (errorMsg == null || errorMsg.toString().isEmpty)) {
         channel.log('[STEP 11] ERROR - empty message from SDK');
         appLogger.e('[STEP 11] ERROR - SDK returned empty message');
         appLogger.e('  ErrorCode: $errorCode');
         appLogger.e('  Full result: $result');
-        
-        String fallbackMsg = 'IC Card scan failed (Code: ${errorCode ?? 'UNKNOWN'}). Please ensure NFC is enabled and card is placed correctly.';
-        
+
+        final fallbackMsg = _chipFallbackMessage(
+          documentType: documentType,
+          errorCode: errorCode,
+        );
+
         return {
           'resultStatus': 'ERROR',
           'errorCode': errorCode ?? 'SE80001',
-          'additionalDataTitle': 'IC Card Scan Failed',
+          'additionalDataTitle': _titleOrFallback(errorTitle, 'IC Card Scan Failed'),
           'additionalDataMessage': fallbackMsg,
           'autoVerificationResult': {
             'result': 'FAIL',
@@ -327,8 +378,9 @@ class ChannelVerificationHandler {
       
       final status = result?['resultStatus'] ?? 'N/A';
       final errorCode = result?['errorCode'];
+      final errorTitle = result?['additionalDataTitle']?.toString();
       final errorMsg = result?['additionalDataMessage'] ?? result?['message'];
-      
+
       channel.log('[STEP 13] RESULT - Status: $status, ErrorCode: $errorCode');
       appLogger.i('[STEP 13] RESULT - Status: $status, ErrorCode: $errorCode');
       
@@ -361,19 +413,25 @@ class ChannelVerificationHandler {
       channel.log('[STEP 13] RESULT keys: ${result?.keys.toList()}');
       appLogger.i('[STEP 13] RESULT keys: ${result?.keys.toList()}');
       
+      // Log detail error supaya log export cukup buat diagnosa
+      if (status != 'SUCCESS') {
+        channel.log('[STEP 13] ERROR detail | code:$errorCode | title:$errorTitle | msg:$errorMsg');
+        appLogger.i('[STEP 13] ERROR detail | code:$errorCode | title:$errorTitle | msg:$errorMsg');
+      }
+
       // Handle empty error message from SDK
       if (status == 'ERROR' && (errorMsg == null || errorMsg.toString().isEmpty)) {
         channel.log('[STEP 13] ERROR - empty message from SDK');
         appLogger.e('[STEP 13] ERROR - SDK returned empty message');
         appLogger.e('  ErrorCode: $errorCode');
         appLogger.e('  Full result: $result');
-        
+
         String fallbackMsg = 'Face verification failed (Code: ${errorCode ?? 'UNKNOWN'}). Please ensure face is clearly visible and lighting is good.';
-        
+
         return {
           'resultStatus': 'ERROR',
           'errorCode': errorCode ?? 'SE10002',
-          'additionalDataTitle': 'Face Verification Failed',
+          'additionalDataTitle': _titleOrFallback(errorTitle, 'Face Verification Failed'),
           'additionalDataMessage': fallbackMsg,
           'autoVerificationResult': {
             'result': 'FAIL',

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
-import '../constant/liquid_constants.dart';
 import 'app_logger.dart';
 import 'liquid_ekyc_channel.dart';
 

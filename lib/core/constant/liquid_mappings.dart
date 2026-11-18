@@ -1,6 +1,6 @@
 import '../../core/services/app_logger.dart';
 import '../../core/services/japanese_romaji_helper.dart';
-import '../../data/services/kyc_be_api.dart';
+import '../../data/models/ocr_results_response.dart';
 
 // ============================================================================
 // Document Type ID Codes

@@ -11,7 +11,7 @@ import 'app_logger.dart';
 ///   via platform channel that has Japanese dictionary built-in. ~50-100ms
 ///   per call.
 ///
-/// Caching: in-process Map<String, String> untuk instant look-up
+/// Caching: in-process `Map<String, String>` untuk instant look-up
 /// saat field yang sama di-render ulang.
 class JapaneseRomajiHelper {
   static final KanaKit _kanaKit = KanaKit();
@@ -55,11 +55,11 @@ class JapaneseRomajiHelper {
 
     String? result;
     try {
-      final hasKanji = await JpTransliterate.isKanji(input: input);
+      final hasKanji = JpTransliterate.isKanji(input: input);
       if (hasKanji) {
         final data = await JpTransliterate.transliterate(kanji: input);
         result = data.romaji;
-        appLogger.d('[Romaji/jp_transliterate] "$input" → "${result ?? 'null'}"');
+        appLogger.d('[Romaji/jp_transliterate] "$input" → "$result"');
       } else {
         final sync = _kanaKit.toRomaji(input);
         result = (sync.isNotEmpty && sync != input) ? sync : null;

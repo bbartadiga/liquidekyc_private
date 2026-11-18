@@ -1,160 +1,83 @@
-import 'dart:convert';
-import 'dart:io';
-import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
-import '../../core/constant/liquid_constants.dart';
-import '../../core/constant/liquid_mappings.dart';
-import '../../core/services/app_logger.dart';
-import '../../core/services/http_logger.dart';
-import '../../core/services/japanese_romaji_helper.dart';
-import '../../core/widgets/debug_http_overlay.dart';
-import 'kyc_retry_queue.dart';
-import 'kyc_queue_worker.dart';
+import '../models/applicant_info_response.dart';
+import '../models/ic_card_info_response.dart';
+import '../models/kyc_request_information_response.dart';
+import '../models/liveness_images_response.dart';
+import '../models/ocr_results_response.dart';
+import '../models/photos_response.dart';
+import '../models/token_response.dart';
+import '../models/verification_results_response.dart';
+import 'be/be_api_base.dart';
+import 'be/kyc_be_applicant_api.dart';
+import 'be/kyc_be_data_api.dart';
+import 'be/kyc_be_result_api.dart';
+import 'be/kyc_be_token_api.dart';
+import 'liquid_http_client.dart';
 
-// Callback untuk progress update
-typedef ProgressCallback = void Function(String step, bool isLoading);
+export 'be/be_api_base.dart' show ProgressCallback;
 
+/// Facade tunggal untuk semua endpoint Liquid Connector API (BE).
+///
+/// Implementasinya dipecah per domain di folder `be/`:
+/// - [KycBeTokenApi] — token SDK & applicant baru
+/// - [KycBeApplicantApi] — registrasi data applicant & KYC request info
+/// - [KycBeDataApi] — baca data applicant (IC card, verifikasi, OCR, foto, liveness)
+/// - [KycBeResultApi] — kirim hasil KYC & trigger orchestration
 class KycBeApi {
-  static const Duration _timeout = Duration(seconds: 60);
-  static const int _maxRetries = 3;
-  static const int _baseRetryDelayMs = 1000;
+  final KycBeTokenApi _token;
+  final KycBeApplicantApi _applicant;
+  final KycBeDataApi _data;
+  final KycBeResultApi _result;
 
-  // Credentials + host mengikuti LiquidConfig (staging / production switch)
-  static String get _beUrl => LiquidConfig.beUrl;
-  static String get _apiKey => LiquidConfig.connectorApiKey;
-  
-  ProgressCallback? onProgress;
-
-  // Endpoint paths - sesuai APM Collection Liquid Postman
-  static const String _pathInboundLiquid = '/inbound-liquid';
-  static const String _pathSdkApplications = '/v1/sdk/applications';
-  static const String _pathApplicants = '/v1/applicants';
-  static const String _pathKycRequestInformations = '/v1/kyc_request_informations';
-  static const String _pathOrchestration = '/v1/orchestration';
-
-  // Applicant sub-resource paths - sesuai APM Collection Liquid Postman
-  static const String _subOcrResults = 'ocr_results';
-  static const String _subIcInfo = 'id_document_ic_information';
-  static const String _subPhotos = 'photos';
-  static const String _subLivenessImages = 'liveness_images';
-  static const String _subVerificationResults = 'verification_results';
-  static const String _subKycResult = 'kyc-result';
-
-  String get _baseUrl => '$_beUrl$_pathInboundLiquid';
-
-  String _applicationUrl(String applicantId, String subPath) =>
-      '$_baseUrl$_pathApplicants/$applicantId/$subPath';
-  
-  Map<String, String> get _headers => {
-    'Content-Type': 'application/json',
-    'X-Ekyc-Api-key': _apiKey,
-  };
-  
-  late final http.Client _client;
-
-  static const bool _bypassSsl = true;
-
-  KycBeApi() {
-    _client = _createClient();
+  /// Satu HTTP client dipakai bersama semua domain API.
+  factory KycBeApi({http.Client? client}) {
+    final shared = client ?? LiquidHttpClient();
+    return KycBeApi._(
+      token: KycBeTokenApi(client: shared),
+      applicant: KycBeApplicantApi(client: shared),
+      data: KycBeDataApi(client: shared),
+      result: KycBeResultApi(client: shared),
+    );
   }
 
-  http.Client _createClient() {
-    if (_bypassSsl) {
-      final ioClient = HttpClient();
-      ioClient.badCertificateCallback = (cert, host, port) => true;
-      return _AnnotatedClient(ioClient);
-    }
-    if (kDebugMode) {
-      return HttpLoggingClient();
-    }
-    return http.Client();
+  KycBeApi._({
+    required KycBeTokenApi token,
+    required KycBeApplicantApi applicant,
+    required KycBeDataApi data,
+    required KycBeResultApi result,
+  })  : _token = token,
+        _applicant = applicant,
+        _data = data,
+        _result = result;
+
+  ProgressCallback? _onProgress;
+
+  /// Callback progress status buat UI loading.
+  ProgressCallback? get onProgress => _onProgress;
+
+  set onProgress(ProgressCallback? value) {
+    _onProgress = value;
+    _token.onProgress = value;
+    _applicant.onProgress = value;
+    _data.onProgress = value;
+    _result.onProgress = value;
   }
 
-  void _log(String message) {
-    if (kDebugMode) {
-      debugPrint('[KycBeApi] $message');
-    }
-  }
-
-  Future<void> _enqueueFailedRequest({
-    required String applicantId,
-    required String endpoint,
-    required String method,
-    Map<String, dynamic>? body,
-  }) async {
-    try {
-      final request = KycQueuedRequest(
-        applicantId: applicantId,
-        endpoint: endpoint,
-        method: method,
-        body: body,
-      );
-      
-      await KycRetryQueue.enqueue(request);
-      _log('Enqueued failed request: $method $endpoint');
-    } catch (e) {
-      _log('Failed to enqueue request: $e');
-    }
-  }
+  // --- Token ---
 
   Future<KycTokenResponse?> applyForSdkToken({
     required String applicantId,
     int operationPriority = 1,
-  }) async {
-    _log('Fetching token from BE...');
+  }) =>
+      _token.applyForSdkToken(
+        applicantId: applicantId,
+        operationPriority: operationPriority,
+      );
 
-    try {
-      final response = await _client.post(
-        Uri.parse('$_baseUrl$_pathSdkApplications'),
-        headers: _headers,
-        body: jsonEncode({
-          'applicant_id': applicantId,
-          'operation_assignment_priority': operationPriority.toString(),
-        }),
-      ).timeout(_timeout);
+  Future<KycTokenResponse?> applyNewApplicant() => _token.applyNewApplicant();
 
-      _log('Response status: ${response.statusCode}');
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        return KycTokenResponse.fromMap(data);
-      } else {
-        return KycTokenResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      }
-    } catch (e) {
-      _log('ERROR: $e');
-      return KycTokenResponse.error(statusCode: 0, message: e.toString());
-    }
-  }
-
-  Future<KycTokenResponse?> applyNewApplicant() async {
-    _log('Creating new applicant via BE...');
-
-    try {
-      final response = await _client.post(
-        Uri.parse('$_baseUrl$_pathSdkApplications'),
-        headers: _headers,
-        body: jsonEncode({'operation_assignment_priority': '1'}),
-      ).timeout(_timeout);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return KycTokenResponse.fromMap(jsonDecode(response.body));
-      } else {
-        return KycTokenResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      }
-    } catch (e) {
-      _log('ERROR: $e');
-      return KycTokenResponse.error(statusCode: 0, message: e.toString());
-    }
-  }
+  // --- Registrasi applicant ---
 
   Future<ApplicantInfoResponse?> registerApplicantInfo({
     required String applicantId,
@@ -163,46 +86,15 @@ class KycBeApi {
     required String address,
     required String phoneNumber,
     String? email,
-  }) async {
-    _log('Registering applicant info to BE...');
-    _log('URL: ${_applicationUrl(applicantId, 'info')}');
-
-    final nameParts = applicantName.split(' ');
-    final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-    final firstName = nameParts.isNotEmpty ? nameParts.first : applicantName;
-
-    for (int attempt = 1; attempt <= _maxRetries + 1; attempt++) {
-      try {
-        final response = await _client.post(
-          Uri.parse(_applicationUrl(applicantId, 'info')),
-          headers: _headers,
-          body: jsonEncode({
-            'first_name': firstName,
-            'last_name': lastName,
-            'birthday': dateOfBirth.replaceAll('-', ''),
-            'address1': address,
-            if (phoneNumber.isNotEmpty) 'phone_number': phoneNumber,
-          }),
-        ).timeout(_timeout);
-
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          return ApplicantInfoResponse.fromMap(jsonDecode(response.body));
-        } else {
-          return ApplicantInfoResponse.error(
-            statusCode: response.statusCode,
-            message: response.body,
-          );
-        }
-      } catch (e) {
-        _log('ERROR (attempt $attempt): $e');
-        if (attempt <= _maxRetries) {
-          _log('Retrying...');
-          await Future.delayed(const Duration(seconds: 1));
-        }
-      }
-    }
-    return ApplicantInfoResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
+  }) =>
+      _applicant.registerApplicantInfo(
+        applicantId: applicantId,
+        applicantName: applicantName,
+        dateOfBirth: dateOfBirth,
+        address: address,
+        phoneNumber: phoneNumber,
+        email: email,
+      );
 
   Future<KycRequestInformationResponse?> registerKycRequestInformation({
     required String applicantId,
@@ -221,197 +113,25 @@ class KycBeApi {
     String? address2,
     String? address3,
     String? address4,
-  }) async {
-    _log('registerKycRequestInformation - applicantId: $applicantId');
-    _log('URL: $_baseUrl$_pathKycRequestInformations');
-    onProgress?.call('KYC Request Info', true);
-
-    try {
-      final response = await _client.post(
-        Uri.parse('$_baseUrl$_pathKycRequestInformations'),
-        headers: _headers,
-        body: jsonEncode({
-          'applicant_id': applicantId,
-          'last_name': lastName,
-          'first_name': firstName,
-          if (middleName != null) 'middle_name': middleName,
-          if (lastNameKana != null) 'last_name_kana': lastNameKana,
-          if (firstNameKana != null) 'first_name_kana': firstNameKana,
-          if (middleNameKana != null) 'middle_name_kana': middleNameKana,
-          'birthday': birthday,
-          if (nationality != null) 'nationality': nationality,
-          'sex': sex,
-          if (zipCode != null) 'zip_code': zipCode,
-          'phone_number': phoneNumber,
-          'address1': address1,
-          if (address2 != null) 'address2': address2,
-          if (address3 != null) 'address3': address3,
-          if (address4 != null) 'address4': address4,
-        }),
-      ).timeout(_timeout);
-
-      _log('Response status: ${response.statusCode}');
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        _log('registerKycRequestInformation SUCCESS');
-        onProgress?.call('KYC Request Info', false);
-        return KycRequestInformationResponse.fromMap(data);
-      } else {
-        _log('ERROR: ${response.statusCode} - ${response.body}');
-        onProgress?.call('KYC Request Info', false);
-        return KycRequestInformationResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      }
-    } catch (e) {
-      _log('ERROR: $e');
-      onProgress?.call('KYC Request Info', false);
-      return KycRequestInformationResponse.error(statusCode: 0, message: e.toString());
-    }
-  }
-
-  Future<ICCardInfoResponse?> getICCardInfo(String applicantId) async {
-    _log('Getting IC Card Info from BE...');
-    _log('URL: ${_applicationUrl(applicantId, _subIcInfo)}');
-    onProgress?.call('IC Card Info', true);
-
-    final url = _applicationUrl(applicantId, _subIcInfo);
-    final endpoint = '$_pathApplicants/$applicantId/$_subIcInfo';
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
-
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('IC Card Info (attempt ${attempt + 1})', true);
-        
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _headers,
-        ).timeout(_timeout);
-
-        _log('Response status: ${response.statusCode}');
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          _log('IC Card Info received: name=${data['name']}');
-          onProgress?.call('IC Card Info', false);
-          return ICCardInfoResponse.fromMap(data);
-        } else {
-          _log('ERROR: ${response.statusCode} - ${response.body}');
-          onProgress?.call('IC Card Info', false);
-          
-          if (attempt < _maxRetries) {
-            _log('Retrying in ${delayMs}ms...');
-            await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-            delayMs *= 2;
-            attempt++;
-            continue;
-          }
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'GET',
-          );
-          
-          return ICCardInfoResponse.error(
-            statusCode: response.statusCode,
-            message: response.body,
-          );
-        }
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          _log('Retrying in ${delayMs}ms...');
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('IC Card Info', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'GET',
-          );
-          
-          return ICCardInfoResponse.error(statusCode: 0, message: e.toString());
-        }
-      }
-    }
-
-    onProgress?.call('IC Card Info', false);
-    return ICCardInfoResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
-
-  Future<VerificationResultsResponse?> getVerificationResults(String applicantId) async {
-    _log('Getting Verification Results from BE...');
-    final url = _applicationUrl(applicantId, _subVerificationResults);
-    final endpoint = '$_pathApplicants/$applicantId/$_subVerificationResults';
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
-
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('Verification Results (attempt ${attempt + 1})', true);
-        
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _headers,
-        ).timeout(_timeout);
-
-        if (response.statusCode == 200) {
-          onProgress?.call('Verification Results', false);
-          return VerificationResultsResponse.fromMap(jsonDecode(response.body));
-        }
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-          continue;
-        }
-        
-        await _enqueueFailedRequest(
-          applicantId: applicantId,
-          endpoint: endpoint,
-          method: 'GET',
-        );
-        
-        onProgress?.call('Verification Results', false);
-        return VerificationResultsResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('Verification Results', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'GET',
-          );
-          
-          return VerificationResultsResponse.error(statusCode: 0, message: e.toString());
-        }
-      }
-    }
-
-    onProgress?.call('Verification Results', false);
-    return VerificationResultsResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
+  }) =>
+      _applicant.registerKycRequestInformation(
+        applicantId: applicantId,
+        lastName: lastName,
+        firstName: firstName,
+        middleName: middleName,
+        lastNameKana: lastNameKana,
+        firstNameKana: firstNameKana,
+        middleNameKana: middleNameKana,
+        birthday: birthday,
+        nationality: nationality,
+        sex: sex,
+        zipCode: zipCode,
+        phoneNumber: phoneNumber,
+        address1: address1,
+        address2: address2,
+        address3: address3,
+        address4: address4,
+      );
 
   Future<RegisterApplicationInfoResponse?> registerApplicationInfo({
     required String applicantId,
@@ -420,370 +140,47 @@ class KycBeApi {
     required String address,
     String? phoneNumber,
     String? email,
-  }) async {
-    _log('RegisterApplicationInfo - applicantId: $applicantId');
-    final url = _applicationUrl(applicantId, 'info');
-    final endpoint = '$_pathApplicants/$applicantId/info';
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
+  }) =>
+      _applicant.registerApplicationInfo(
+        applicantId: applicantId,
+        applicantName: applicantName,
+        dateOfBirth: dateOfBirth,
+        address: address,
+        phoneNumber: phoneNumber,
+        email: email,
+      );
 
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('Register App Info (attempt ${attempt + 1})', true);
-        
-        final nameParts = applicantName.split(' ');
-        final lastName = nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
-        final firstName = nameParts.isNotEmpty ? nameParts.first : applicantName;
+  // --- Baca data applicant ---
 
-        final body = {
-          'first_name': firstName,
-          'last_name': lastName,
-          'birthday': dateOfBirth.replaceAll('-', ''),
-          'address1': address,
-          if (phoneNumber != null && phoneNumber.isNotEmpty) 'phone_number': phoneNumber,
-        };
+  Future<ICCardInfoResponse?> getICCardInfo(String applicantId) =>
+      _data.getICCardInfo(applicantId);
 
-        final response = await _client.post(
-          Uri.parse(url),
-          headers: _headers,
-          body: jsonEncode(body),
-        ).timeout(_timeout);
+  Future<VerificationResultsResponse?> getVerificationResults(
+    String applicantId,
+  ) =>
+      _data.getVerificationResults(applicantId);
 
-        _log('Response status: ${response.statusCode}');
+  Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) =>
+      _data.getOcrResultsFromBe(applicantId);
 
-        if (response.statusCode == 200 || response.statusCode == 201) {
-          final data = jsonDecode(response.body);
-          _log('RegisterApplicationInfo SUCCESS');
-          onProgress?.call('Register App Info', false);
-          return RegisterApplicationInfoResponse.fromMap(data);
-        }
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-          continue;
-        }
-        
-        await _enqueueFailedRequest(
-          applicantId: applicantId,
-          endpoint: endpoint,
-          method: 'POST',
-          body: body,
-        );
-        
-        onProgress?.call('Register App Info', false);
-        return RegisterApplicationInfoResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('Register App Info', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'POST',
-          );
-          
-          return RegisterApplicationInfoResponse.error(statusCode: 0, message: e.toString());
-        }
-      }
-    }
+  Future<PhotosResponse?> getPhotos(String applicantId) =>
+      _data.getPhotos(applicantId);
 
-    onProgress?.call('Register App Info', false);
-    return RegisterApplicationInfoResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
+  Future<LivenessImagesResponse?> getLivenessImages(String applicantId) =>
+      _data.getLivenessImages(applicantId);
 
-Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) async {
-    _log('getOcrResultsFromBe - applicantId: $applicantId');
-    final url = _applicationUrl(applicantId, _subOcrResults);
-    final endpoint = '$_pathApplicants/$applicantId/$_subOcrResults';
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
-
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('OCR Results (attempt ${attempt + 1})', true);
-        
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _headers,
-        ).timeout(_timeout);
-
-        _log('Response status: ${response.statusCode}');
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          _log('getOcrResultsFromBe SUCCESS');
-          onProgress?.call('OCR Results', false);
-          return OcrResultsBeResponse.fromMap(data);
-        }
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-          continue;
-        }
-        
-        await _enqueueFailedRequest(
-          applicantId: applicantId,
-          endpoint: endpoint,
-          method: 'GET',
-        );
-        
-        onProgress?.call('OCR Results', false);
-        return OcrResultsBeResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('OCR Results', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'GET',
-          );
-          
-          return OcrResultsBeResponse.error(statusCode: 0, message: e.toString());
-        }
-      }
-    }
-
-    onProgress?.call('OCR Results', false);
-    return OcrResultsBeResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
-
-  Future<PhotosResponse?> getPhotos(String applicantId) async {
-    _log('getPhotos - applicantId: $applicantId');
-    final url = _applicationUrl(applicantId, _subPhotos);
-    final endpoint = '$_pathApplicants/$applicantId/$_subPhotos';
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
-
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('Document Photos (attempt ${attempt + 1})', true);
-        
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _headers,
-        ).timeout(_timeout);
-
-        _log('Response status: ${response.statusCode}');
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          _log('getPhotos SUCCESS');
-          onProgress?.call('Document Photos', false);
-          return PhotosResponse.fromMap(data);
-        }
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-          continue;
-        }
-        
-        await _enqueueFailedRequest(
-          applicantId: applicantId,
-          endpoint: endpoint,
-          method: 'GET',
-        );
-        
-        onProgress?.call('Document Photos', false);
-        return PhotosResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('Document Photos', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'GET',
-          );
-          
-          return PhotosResponse.error(statusCode: 0, message: e.toString());
-        }
-      }
-    }
-
-    onProgress?.call('Document Photos', false);
-    return PhotosResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
-
-  Future<LivenessImagesResponse?> getLivenessImages(String applicantId) async {
-    _log('getLivenessImages - applicantId: $applicantId');
-    final url = _applicationUrl(applicantId, _subLivenessImages);
-    final endpoint = '$_pathApplicants/$applicantId/$_subLivenessImages';
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
-
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('Liveness Images (attempt ${attempt + 1})', true);
-        
-        final response = await _client.get(
-          Uri.parse(url),
-          headers: _headers,
-        ).timeout(_timeout);
-
-        _log('Response status: ${response.statusCode}');
-
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          _log('getLivenessImages SUCCESS');
-          onProgress?.call('Liveness Images', false);
-          return LivenessImagesResponse.fromMap(data);
-        }
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-          continue;
-        }
-        
-        await _enqueueFailedRequest(
-          applicantId: applicantId,
-          endpoint: endpoint,
-          method: 'GET',
-        );
-        
-        onProgress?.call('Liveness Images', false);
-        return LivenessImagesResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('Liveness Images', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'GET',
-          );
-          
-          return LivenessImagesResponse.error(statusCode: 0, message: e.toString());
-        }
-      }
-    }
-
-    onProgress?.call('Liveness Images', false);
-    return LivenessImagesResponse.error(statusCode: 0, message: 'Failed after retries');
-  }
+  // --- Hasil KYC ---
 
   Future<bool> registerKycResult({
     required String applicantId,
     required String kycResult,
     required bool hasSensitiveInfo,
-  }) async {
-    _log('registerKycResult - applicantId: $applicantId, result: $kycResult');
-    final url = _applicationUrl(applicantId, _subKycResult);
-    final endpoint = '$_pathApplicants/$applicantId/$_subKycResult';
-    final body = {
-      'result': kycResult,
-      'reason': hasSensitiveInfo ? 'has_sensitive_info' : 'All verification passed',
-    };
-    int attempt = 0;
-    int delayMs = _baseRetryDelayMs;
-    final random = Random();
-
-    while (attempt <= _maxRetries) {
-      try {
-        onProgress?.call('Register KYC Result (attempt ${attempt + 1})', true);
-        
-        final response = await _client.post(
-          Uri.parse(url),
-          headers: _headers,
-          body: jsonEncode(body),
-        ).timeout(_timeout);
-
-        _log('Response status: ${response.statusCode}');
-
-        if (response.statusCode == 201 || response.statusCode == 200) {
-          onProgress?.call('Register KYC Result', false);
-          return true;
-        }
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-          continue;
-        }
-        
-        await _enqueueFailedRequest(
-          applicantId: applicantId,
-          endpoint: endpoint,
-          method: 'POST',
-          body: body,
-        );
-        
-        onProgress?.call('Register KYC Result', false);
-        return false;
-      } catch (e) {
-        _log('ERROR (attempt ${attempt + 1}): $e');
-        
-        if (attempt < _maxRetries) {
-          await Future.delayed(Duration(milliseconds: delayMs + random.nextInt(500)));
-          delayMs *= 2;
-          attempt++;
-        } else {
-          onProgress?.call('Register KYC Result', false);
-          
-          await _enqueueFailedRequest(
-            applicantId: applicantId,
-            endpoint: endpoint,
-            method: 'POST',
-            body: body,
-          );
-          
-          return false;
-        }
-      }
-    }
-
-    onProgress?.call('Register KYC Result', false);
-    return false;
-  }
+  }) =>
+      _result.registerKycResult(
+        applicantId: applicantId,
+        kycResult: kycResult,
+        hasSensitiveInfo: hasSensitiveInfo,
+      );
 
   Future<KycOrchestrationResponse?> processKycOrchestration({
     required String applicantId,
@@ -795,777 +192,16 @@ Future<OcrResultsBeResponse?> getOcrResultsFromBe(String applicantId) async {
     String? zipCode,
     String? phoneNumber,
     String? address1,
-  }) async {
-    _log('processKycOrchestration - applicantId: $applicantId');
-    _log('URL: $_baseUrl$_pathOrchestration/$applicantId/process-kyc');
-    onProgress?.call('KYC Orchestration', true);
-
-    try {
-      final response = await _client.post(
-        Uri.parse('$_baseUrl$_pathOrchestration/$applicantId/process-kyc'),
-        headers: _headers,
-        body: jsonEncode({
-          'first_name': firstName,
-          'last_name': lastName,
-          'birthday': birthday,
-          if (nationality != null) 'nationality': nationality,
-          if (sex != null) 'sex': sex,
-          if (zipCode != null) 'zip_code': zipCode,
-          if (phoneNumber != null) 'phone_number': phoneNumber,
-          if (address1 != null) 'address1': address1,
-        }),
-      ).timeout(_timeout);
-
-      onProgress?.call('KYC Orchestration', false);
-
-      _log('Response status: ${response.statusCode}');
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        _log('processKycOrchestration SUCCESS');
-        return KycOrchestrationResponse.fromMap(data);
-      } else {
-        _log('processKycOrchestration ERROR: ${response.statusCode} - ${response.body}');
-        return KycOrchestrationResponse.error(
-          statusCode: response.statusCode,
-          message: response.body,
-        );
-      }
-    } catch (e) {
-      _log('ERROR: $e');
-      onProgress?.call('KYC Orchestration', false);
-      return KycOrchestrationResponse.error(statusCode: 0, message: e.toString());
-    }
-  }
-}
-
-class KycOrchestrationResponse {
-  final bool isSuccess;
-  final String? applicantId;
-  final Map<String, dynamic>? registerInfo;
-  final Map<String, dynamic>? icCardInfo;
-  final List<dynamic>? photos;
-  final List<dynamic>? livenessImages;
-  final Map<String, dynamic>? verificationResults;
-  final int? statusCode;
-  final String? errorMessage;
-
-  KycOrchestrationResponse({
-    required this.isSuccess,
-    this.applicantId,
-    this.registerInfo,
-    this.icCardInfo,
-    this.photos,
-    this.livenessImages,
-    this.verificationResults,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory KycOrchestrationResponse.fromMap(Map<String, dynamic> map) {
-    return KycOrchestrationResponse(
-      isSuccess: true,
-      applicantId: map['applicant_id'],
-      registerInfo: map['register_info'] as Map<String, dynamic>?,
-      icCardInfo: map['ic_card_info'] as Map<String, dynamic>?,
-      photos: map['photos'] as List<dynamic>?,
-      livenessImages: map['liveness_images'] as List<dynamic>?,
-      verificationResults: map['verification_results'] as Map<String, dynamic>?,
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory KycOrchestrationResponse.error({
-    required int statusCode,
-    required String message,
-  }) => KycOrchestrationResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class KycTokenResponse {
-  final bool isSuccess;
-  final String? applicantId;
-  final String? token;
-  final int? statusCode;
-  final String? errorMessage;
-
-  KycTokenResponse({
-    required this.isSuccess,
-    this.applicantId,
-    this.token,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory KycTokenResponse.fromMap(Map<String, dynamic> map) {
-    return KycTokenResponse(
-      isSuccess: map['token'] != null,
-      applicantId: map['applicant_id'],
-      token: map['token'],
-      statusCode: map['status_code'],
-      errorMessage: map['error_message'],
-    );
-  }
-
-  factory KycTokenResponse.error({
-    required int statusCode,
-    required String message,
-  }) => KycTokenResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class ApplicantInfoResponse {
-  final bool isSuccess;
-  final String? applicationId;
-  final String? status;
-  final String? registeredAt;
-  final int? statusCode;
-  final String? errorMessage;
-
-  ApplicantInfoResponse({
-    required this.isSuccess,
-    this.applicationId,
-    this.status,
-    this.registeredAt,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory ApplicantInfoResponse.fromMap(Map<String, dynamic> map) {
-    return ApplicantInfoResponse(
-      isSuccess: map['application_id'] != null || map['id'] != null,
-      applicationId: map['application_id'] ?? map['id'],
-      status: map['status'],
-      registeredAt: map['registered_at'],
-      statusCode: map['status_code'],
-      errorMessage: map['error_message'],
-    );
-  }
-
-  factory ApplicantInfoResponse.error({
-    required int statusCode,
-    required String message,
-  }) => ApplicantInfoResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class ICCardInfoResponse {
-  final bool isSuccess;
-  final String? name;
-  final String? nameKana;
-  final String? birthday;
-  final String? sex;
-  final String? address;
-  final String? addressPref;
-  final String? addressCity;
-  final String? addressOther;
-  final String? idNumber;
-  final String? issueDate;
-  final String? expireDate;
-  final String? myNumber;
-  final String? idFacePhoto;
-  // Gen-2 / Specified Residence Card fields (D7 page 6-22)
-  final String? cardType;                   // 在留カード／特別永住者証明書の種別 0/1/2/5/6/7/8
-  final String? residentStatusCode;         // 在留資格 (コード) 3-digit
-  final String? kindOfPermissionCode;       // 許可の種類 (コード) 2-digit
-  final String? employmentRestrictionCode;  // 就労制限の有無 1-digit
-  final String? nationalityCode3;           // 国籍 (3桁) ISO 3166-1 alpha-3
-  final String? nationalityCode3Alt;       // 国籍 (3桁) 第二候補
-  // Stay period split (Gen-2 specific)
-  final int? stayPeriodYear;                // YY 形式
-  final int? stayPeriodMonth;               // MM 形式
-  final int? stayPeriodDay;                 // DDD 形式 (max 999)
-  final int? statusCode;
-  final String? errorMessage;
-
-  ICCardInfoResponse({
-    required this.isSuccess,
-    this.name,
-    this.nameKana,
-    this.birthday,
-    this.sex,
-    this.address,
-    this.addressPref,
-    this.addressCity,
-    this.addressOther,
-    this.idNumber,
-    this.issueDate,
-    this.expireDate,
-    this.myNumber,
-    this.idFacePhoto,
-    this.cardType,
-    this.residentStatusCode,
-    this.kindOfPermissionCode,
-    this.employmentRestrictionCode,
-    this.nationalityCode3,
-    this.nationalityCode3Alt,
-    this.stayPeriodYear,
-    this.stayPeriodMonth,
-    this.stayPeriodDay,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  String get fullAddress {
-    final parts = [addressPref, addressCity, addressOther, address]
-        .where((p) => p != null && p.isNotEmpty)
-        .toList();
-    return parts.isNotEmpty ? parts.join(' ') : (address ?? '');
-  }
-
-  // Getters untuk display - return null kalau kosong (agar placeholder bisa tampil)
-  String? get displayName => name;
-  String? get displayNameKana => nameKana;
-  String? get displayBirthday {
-    if (birthday == null || birthday!.isEmpty) return null;
-    if (birthday!.length == 8) {
-      return '${birthday!.substring(0, 4)}-${birthday!.substring(4, 6)}-${birthday!.substring(6, 8)}';
-    }
-    return birthday;
-  }
-  String? get displayExpireDate {
-    if (expireDate == null || expireDate!.isEmpty) return null;
-    if (expireDate!.length == 8) {
-      return '${expireDate!.substring(0, 4)}-${expireDate!.substring(4, 6)}-${expireDate!.substring(6, 8)}';
-    }
-    return expireDate;
-  }
-  String? get displayIssueDate {
-    if (issueDate == null || issueDate!.isEmpty) return null;
-    if (issueDate!.length == 8) {
-      return '${issueDate!.substring(0, 4)}-${issueDate!.substring(4, 6)}-${issueDate!.substring(6, 8)}';
-    }
-    return issueDate;
-  }
-  String? get displaySex => sex?.toUpperCase();
-  String? get displayIdNumber => idNumber;
-
-  factory ICCardInfoResponse.fromMap(Map<String, dynamic> map) {
-    String? idFacePhoto;
-    final facePhotoData = map['id_face_photo'];
-    if (facePhotoData is Map) {
-      idFacePhoto = facePhotoData['image'] as String?;
-    } else if (facePhotoData is String) {
-      idFacePhoto = facePhotoData;
-    }
-
-    // Stay period split — accepted as int or string ("3年"/"030" formats)
-    int? toInt(dynamic v) {
-      if (v == null) return null;
-      if (v is int) return v;
-      final s = v.toString().replaceAll(RegExp(r'[^0-9-]'), '');
-      return s.isEmpty ? null : int.tryParse(s);
-    }
-
-    return ICCardInfoResponse(
-      isSuccess: true,
-      name: map['name'],
-      nameKana: map['name_kana'],
-      birthday: map['birthday'],
-      sex: map['sex'],
-      address: map['address'],
-      addressPref: map['address_pref'],
-      addressCity: map['address_city'],
-      addressOther: map['address_other'],
-      idNumber: map['id_number'],
-      issueDate: map['issue_date'],
-      expireDate: map['expire_date'],
-      myNumber: map['my_number'],
-      idFacePhoto: idFacePhoto,
-      // Gen-2 fields
-      cardType: map['card_type']?.toString() ??
-                map['residence_card_type']?.toString(),
-      residentStatusCode: map['resident_status_code']?.toString(),
-      kindOfPermissionCode: map['kind_of_permission_code']?.toString(),
-      employmentRestrictionCode:
-          map['employment_restriction_code']?.toString(),
-      nationalityCode3: map['nationality_code3']?.toString() ??
-                        map['nationality_3digit']?.toString(),
-      nationalityCode3Alt: map['nationality_code3_alt']?.toString() ??
-                            map['nationality_3digit_alt']?.toString(),
-      stayPeriodYear: toInt(map['stay_period_year']),
-      stayPeriodMonth: toInt(map['stay_period_month']),
-      stayPeriodDay: toInt(map['stay_period_day']),
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory ICCardInfoResponse.error({
-    required int statusCode,
-    required String message,
-  }) => ICCardInfoResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-// ============================================================================
-// Extension on ICCardInfoResponse — Romaji (latin) versions
-// name_kana (katakana) instant via kana_kit; name (kanji) needs async
-// ============================================================================
-extension ICCardInfoResponseMapping on ICCardInfoResponse {
-  String? get nameRomaji => JapaneseRomajiHelper.toTitleCaseRomajiSync(nameKana);
-  Future<String?> get nameRomajiAsync =>
-      JapaneseRomajiHelper.toTitleCaseRomajiAsync(nameKana);
-  String? get nameKanjiRomaji => JapaneseRomajiHelper.toTitleCaseRomajiSync(name);
-  Future<String?> get nameKanjiRomajiAsync =>
-      JapaneseRomajiHelper.toTitleCaseRomajiAsync(name);
-  String? get addressRomaji => JapaneseRomajiHelper.toRomajiSync(address);
-  Future<String?> get addressRomajiAsync =>
-      JapaneseRomajiHelper.toRomajiAsync(address);
-  String? get addressPrefRomaji => JapaneseRomajiHelper.toRomajiSync(addressPref);
-  Future<String?> get addressPrefRomajiAsync =>
-      JapaneseRomajiHelper.toRomajiAsync(addressPref);
-  String? get addressCityRomaji => JapaneseRomajiHelper.toRomajiSync(addressCity);
-  Future<String?> get addressCityRomajiAsync =>
-      JapaneseRomajiHelper.toRomajiAsync(addressCity);
-  String? get addressOtherRomaji => JapaneseRomajiHelper.toRomajiSync(addressOther);
-  Future<String?> get addressOtherRomajiAsync =>
-      JapaneseRomajiHelper.toRomajiAsync(addressOther);
-}
-
-class VerificationResultsResponse {
-  final bool isSuccess;
-  final double? faceMatchScore;
-  final String? autoVerificationStatus;
-  final String? livenessResult;
-  final int? statusCode;
-  final String? errorMessage;
-
-  VerificationResultsResponse({
-    required this.isSuccess,
-    this.faceMatchScore,
-    this.autoVerificationStatus,
-    this.livenessResult,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory VerificationResultsResponse.fromMap(Map<String, dynamic> map) {
-    return VerificationResultsResponse(
-      isSuccess: true,
-      faceMatchScore: map['face_match_score'] != null
-          ? (map['face_match_score'] as num).toDouble()
-          : null,
-      autoVerificationStatus: map['auto_verification_status'] ?? map['status'],
-      livenessResult: map['liveness_result'],
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory VerificationResultsResponse.error({
-    required int statusCode,
-    required String message,
-  }) => VerificationResultsResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class RegisterApplicationInfoResponse {
-  final bool isSuccess;
-  final String? applicationId;
-  final String? status;
-  final String? registeredAt;
-  final int? statusCode;
-  final String? errorMessage;
-
-  RegisterApplicationInfoResponse({
-    required this.isSuccess,
-    this.applicationId,
-    this.status,
-    this.registeredAt,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory RegisterApplicationInfoResponse.fromMap(Map<String, dynamic> map) {
-    return RegisterApplicationInfoResponse(
-      isSuccess: true,
-      applicationId: map['application_id'] ?? map['id'],
-      status: map['status'],
-      registeredAt: map['registered_at'],
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory RegisterApplicationInfoResponse.error({
-    required int statusCode,
-    required String message,
-  }) => RegisterApplicationInfoResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class OcrResultsBeResponse {
-  final bool isSuccess;
-  final String? name;
-  final String? birthday;
-  final String? sex;
-  final String? address;
-  final String? addressPref;
-  final String? addressCity;
-  final String? addressOther;
-  final String? zipCode;
-  final String? expireDate;
-  final String? idNumber;
-  final String? issueDate;
-  final String? nationality;
-  final String? residentStatus;
-  final String? stayPeriod;
-  final String? stayExpireDate;
-  final String? idDocumentType;
-  // Gen-2 / Specified Residence Card fields (D7 page 6-22)
-  final String? cardType;
-  final String? residentStatusCode;
-  final String? kindOfPermissionCode;
-  final String? employmentRestrictionCode;
-  final String? nationalityCode3;
-  // Address change detection + change flags (D1 page 6)
-  final String? addressChanged;             // 0/1 — recently changed
-  final String? nameChanged;               // 0/1 — recently changed
-  final String? remarksExist;              // 0/1 — has remarks content
-  // Driver's License multi-category (D1 page ~10)
-  final List<String>? driversLicenseTypes;
-  // 個人番号 (My Number) — hanya untuk My Number Card
-  final String? myNumber;
-  final int? statusCode;
-  final String? errorMessage;
-
-  OcrResultsBeResponse({
-    required this.isSuccess,
-    this.name,
-    this.birthday,
-    this.sex,
-    this.address,
-    this.addressPref,
-    this.addressCity,
-    this.addressOther,
-    this.zipCode,
-    this.expireDate,
-    this.idNumber,
-    this.issueDate,
-    this.nationality,
-    this.residentStatus,
-    this.stayPeriod,
-    this.stayExpireDate,
-    this.idDocumentType,
-    this.cardType,
-    this.residentStatusCode,
-    this.kindOfPermissionCode,
-    this.employmentRestrictionCode,
-    this.nationalityCode3,
-    this.addressChanged,
-    this.nameChanged,
-    this.remarksExist,
-    this.driversLicenseTypes,
-    this.myNumber,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  String get fullAddress {
-    final parts = [addressPref, addressCity, addressOther, address]
-        .where((p) => p != null && p.isNotEmpty)
-        .toList();
-    return parts.isNotEmpty ? parts.join(' ') : address ?? '-';
-  }
-
-  factory OcrResultsBeResponse.fromMap(Map<String, dynamic> map) {
-    final idDocumentType = map['id_document_type']?.toString();
-    final nationality2 = map['nationality'];
-    final residentStatus = map['resident_status'];
-
-    // Gen-2 fields
-    final cardType = map['card_type']?.toString();
-    final residentStatusCode = map['resident_status_code']?.toString();
-    final kindOfPermissionCode =
-        map['kind_of_permission_code']?.toString();
-    final employmentRestrictionCode =
-        map['employment_restriction_code']?.toString();
-    final nationalityCode3 =
-        map['nationality_code3']?.toString();
-
-    final addressChanged = map['address_changed']?.toString();
-    final nameChanged = map['name_changed']?.toString();
-    final remarksExist = map['remarks_exist']?.toString();
-    final driversLicenseTypes =
-        (map['drivers_license_types'] as List<dynamic>?)?.cast<String>();
-    final myNumber = map['my_number']?.toString();
-
-    appLogger.i(
-      '[OCR-Parse-BE] '
-      'id_document_type=$idDocumentType | '
-      'card_type=$cardType | '
-      'nationality_2=$nationality2 | '
-      'nationality_3=$nationalityCode3 | '
-      'resident_status=$residentStatus | '
-      'resident_status_code=$residentStatusCode | '
-      'kind_of_permission=$kindOfPermissionCode | '
-      'employment_restriction=$employmentRestrictionCode | '
-      'address_changed=${addressChanged ?? "-"} | '
-      'name_changed=${nameChanged ?? "-"} | '
-      'remarks_exist=${remarksExist ?? "-"} | '
-      'license_types=${driversLicenseTypes?.join(",") ?? "-"} | '
-      'my_number=${myNumber != null && myNumber.length >= 4 ? "*******${myNumber.substring(myNumber.length - 4)}" : "-"} | '
-      'name=${map['name'] ?? "-"} | '
-      'birthday=${map['birthday'] ?? "-"} | '
-      'sex=${map['sex'] ?? "-"} | '
-      'id_number=${map['id_number'] ?? "-"} | '
-      'expire_date=${map['expire_date'] ?? "-"} | '
-      'issue_date=${map['issue_date'] ?? "-"} | '
-      'stay_period=${map['stay_period'] ?? "-"} | '
-      'address=${map['address'] != null ? "***MASKED***" : "-"}',
-    );
-
-    return OcrResultsBeResponse(
-      isSuccess: true,
-      name: map['name'],
-      birthday: map['birthday'],
-      sex: map['sex'],
-      address: map['address'],
-      addressPref: map['address_pref'],
-      addressCity: map['address_city'],
-      addressOther: map['address_other'],
-      zipCode: map['zip_code'],
-      expireDate: map['expire_date'],
-      idNumber: map['id_number'],
-      issueDate: map['issue_date'],
-      nationality: nationality2,
-      residentStatus: residentStatus,
-      stayPeriod: map['stay_period'],
-      stayExpireDate: map['stay_expire_date'],
-      idDocumentType: idDocumentType,
-      cardType: cardType,
-      residentStatusCode: residentStatusCode,
-      kindOfPermissionCode: kindOfPermissionCode,
-      employmentRestrictionCode: employmentRestrictionCode,
-      nationalityCode3: nationalityCode3,
-      addressChanged: addressChanged,
-      nameChanged: nameChanged,
-      remarksExist: remarksExist,
-      driversLicenseTypes: driversLicenseTypes,
-      myNumber: myNumber,
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory OcrResultsBeResponse.error({
-    required int statusCode,
-    required String message,
-  }) => OcrResultsBeResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class PhotosResponse {
-  final bool isSuccess;
-  final String? faceFrontPhoto;
-  final List<IdDocumentPhoto>? idDocumentPhotos;
-  final int? statusCode;
-  final String? errorMessage;
-
-  PhotosResponse({
-    required this.isSuccess,
-    this.faceFrontPhoto,
-    this.idDocumentPhotos,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory PhotosResponse.fromMap(Map<String, dynamic> map) {
-    final List<IdDocumentPhoto> photos = [];
-
-    if (map['id_document_photos'] != null) {
-      for (final item in map['id_document_photos'] as List) {
-        photos.add(IdDocumentPhoto.fromMap(item));
-      }
-    }
-
-    String? faceFrontPhoto;
-    final facePhotoData = map['face_front_photo'];
-    if (facePhotoData is Map) {
-      faceFrontPhoto = facePhotoData['image'] as String?;
-    } else if (facePhotoData is String) {
-      faceFrontPhoto = facePhotoData;
-    }
-
-    return PhotosResponse(
-      isSuccess: true,
-      faceFrontPhoto: faceFrontPhoto,
-      idDocumentPhotos: photos.isNotEmpty ? photos : null,
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory PhotosResponse.error({
-    required int statusCode,
-    required String message,
-  }) => PhotosResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class IdDocumentPhoto {
-  final String? fileName;
-  final String? image;
-  final String? idDocumentType;
-  final String? photoType;
-  final bool? isMasked;
-  final bool? isWaitingMasked;
-
-  IdDocumentPhoto({
-    this.fileName,
-    this.image,
-    this.idDocumentType,
-    this.photoType,
-    this.isMasked,
-    this.isWaitingMasked,
-  });
-
-  factory IdDocumentPhoto.fromMap(Map<String, dynamic> map) {
-    return IdDocumentPhoto(
-      fileName: map['file_name'] as String?,
-      image: map['image'] as String?,
-      idDocumentType: map['id_document_type'] as String?,
-      photoType: map['photo_type'] as String?,
-      isMasked: map['is_masked'] as bool?,
-      isWaitingMasked: map['is_waiting_masked'] as bool?,
-    );
-  }
-}
-
-class LivenessImagesResponse {
-  final bool isSuccess;
-  final List<LivenessImage>? livenessImages;
-  final int? statusCode;
-  final String? errorMessage;
-
-  LivenessImagesResponse({
-    required this.isSuccess,
-    this.livenessImages,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory LivenessImagesResponse.fromMap(Map<String, dynamic> map) {
-    final List<LivenessImage> images = [];
-
-    if (map['liveness_images'] != null) {
-      for (final item in map['liveness_images'] as List) {
-        images.add(LivenessImage.fromMap(item));
-      }
-    }
-
-    return LivenessImagesResponse(
-      isSuccess: true,
-      livenessImages: images.isNotEmpty ? images : null,
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory LivenessImagesResponse.error({
-    required int statusCode,
-    required String message,
-  }) => LivenessImagesResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
-}
-
-class LivenessImage {
-  final String? fileName;
-  final String? image;
-
-  LivenessImage({
-    this.fileName,
-    this.image,
-  });
-
-  factory LivenessImage.fromMap(Map<String, dynamic> map) {
-    return LivenessImage(
-      fileName: map['file_name'] as String?,
-      image: map['image'] as String?,
-    );
-  }
-}
-
-class _AnnotatedClient extends http.BaseClient {
-  final HttpClient _ioClient;
-
-  _AnnotatedClient(this._ioClient);
-
-  @override
-  Future<http.StreamedResponse> send(http.BaseRequest request) async {
-    final ioRequest = await _ioClient.openUrl(request.method, request.url);
-    request.headers.forEach((key, value) {
-      ioRequest.headers.set(key, value);
-    });
-    if (request is http.Request && request.bodyBytes.isNotEmpty) {
-      ioRequest.add(request.bodyBytes);
-    }
-    final ioResponse = await ioRequest.close();
-    final stream = ioResponse.cast<List<int>>();
-    final Map<String, String> responseHeaders = {};
-    ioResponse.headers.forEach((key, values) {
-      responseHeaders[key] = values.join(',');
-    });
-    return http.StreamedResponse(
-      stream,
-      ioResponse.statusCode,
-      headers: responseHeaders,
-    );
-  }
-}
-
-class KycRequestInformationResponse {
-  final bool isSuccess;
-  final String? applicantId;
-  final String? status;
-  final int? statusCode;
-  final String? errorMessage;
-
-  KycRequestInformationResponse({
-    required this.isSuccess,
-    this.applicantId,
-    this.status,
-    this.statusCode,
-    this.errorMessage,
-  });
-
-  factory KycRequestInformationResponse.fromMap(Map<String, dynamic> map) {
-    return KycRequestInformationResponse(
-      isSuccess: map['applicant_id'] != null,
-      applicantId: map['applicant_id'],
-      status: map['status'],
-      statusCode: map['status_code'],
-    );
-  }
-
-  factory KycRequestInformationResponse.error({
-    required int statusCode,
-    required String message,
-  }) => KycRequestInformationResponse(
-    isSuccess: false,
-    statusCode: statusCode,
-    errorMessage: message,
-  );
+  }) =>
+      _result.processKycOrchestration(
+        applicantId: applicantId,
+        firstName: firstName,
+        lastName: lastName,
+        birthday: birthday,
+        nationality: nationality,
+        sex: sex,
+        zipCode: zipCode,
+        phoneNumber: phoneNumber,
+        address1: address1,
+      );
 }

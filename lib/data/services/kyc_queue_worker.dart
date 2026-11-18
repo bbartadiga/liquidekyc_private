@@ -1,7 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+
+import '../../core/constant/liquid_constants.dart';
+import 'be/be_api_config.dart';
 import 'kyc_retry_queue.dart';
+import 'liquid_http_client.dart';
 
 typedef QueueRetryCallback = void Function(String endpoint, bool success, String? error);
 
@@ -10,12 +16,18 @@ class KycQueueWorker {
   static bool _isProcessing = false;
   static QueueRetryCallback? _onRetryComplete;
   static http.Client? _client;
-  
+
   static const Duration _checkInterval = Duration(minutes: 5);
-  
-  static void initialize({QueueRetryCallback? onRetryComplete}) {
+
+  /// Timeout sama dengan request BE biasa.
+  static const Duration _requestTimeout = Duration(seconds: 60);
+
+  static void initialize({
+    QueueRetryCallback? onRetryComplete,
+    http.Client? client,
+  }) {
     _onRetryComplete = onRetryComplete;
-    _client = http.Client();
+    _client = client ?? LiquidHttpClient();
     _log('QueueWorker initialized');
   }
   
@@ -84,15 +96,23 @@ class KycQueueWorker {
     try {
       http.Response response;
       final url = _buildUrl(request);
-      
+      final headers = {
+        'Content-Type': 'application/json',
+        'X-Ekyc-Api-key': LiquidConfig.connectorApiKey,
+      };
+
       if (request.method.toUpperCase() == 'GET') {
-        response = await _client!.get(Uri.parse(url)).timeout(const Duration(seconds: 30));
+        response = await _client!
+            .get(Uri.parse(url), headers: headers)
+            .timeout(_requestTimeout);
       } else {
-        response = await _client!.post(
-          Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
-          body: request.body != null ? _encodeBody(request.body!) : null,
-        ).timeout(const Duration(seconds: 30));
+        response = await _client!
+            .post(
+              Uri.parse(url),
+              headers: headers,
+              body: request.body != null ? _encodeBody(request.body!) : null,
+            )
+            .timeout(_requestTimeout);
       }
       
       if (response.statusCode >= 200 && response.statusCode < 300) {
@@ -111,12 +131,18 @@ class KycQueueWorker {
     }
   }
   
+  /// Endpoint di queue disimpan sebagai path relatif (tanpa host),
+  /// jadi harus digabung dengan base URL BE sebelum dipanggil.
   static String _buildUrl(KycQueuedRequest request) {
-    return '${request.endpoint}';
+    if (request.endpoint.startsWith('http')) {
+      return request.endpoint;
+    }
+    return '$beBaseUrl${request.endpoint}';
   }
-  
+
+  /// BE expect JSON, bukan form-urlencoded.
   static String _encodeBody(Map<String, dynamic> body) {
-    return body.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value?.toString() ?? '')}').join('&');
+    return jsonEncode(body);
   }
   
   static Future<void> _incrementRetryCount(KycQueuedRequest request) async {

@@ -25,6 +25,7 @@ class LiquidEkycPlugin : FlutterPlugin, ActivityAware {
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         log("onAttachedToEngine - DEBUG_MODE: $DEBUG_MODE")
         channel = MethodChannel(binding.binaryMessenger, SdkConfig.CHANNEL_NAME)
+        SdkManager.attachLogChannel(channel)
         channel.setMethodCallHandler { call, result ->
             log("Method call: ${call.method}")
             handleMethodCall(call, result)
