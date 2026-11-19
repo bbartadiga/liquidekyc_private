@@ -1,4 +1,6 @@
 import '../../core/services/app_logger.dart';
+import '../../data/models/applicant_info_payload.dart';
+import 'be/be_call_runner.dart';
 import '../models/ic_card_info_response.dart';
 import '../models/liveness_images_response.dart';
 import '../models/ocr_results_response.dart';
@@ -27,22 +29,26 @@ class KycBeDataBundle {
 class KycBeDataService {
   final KycBeApi _beApi;
 
-  KycBeDataService({KycBeApi? beApi}) : _beApi = beApi ?? KycBeApi();
+  /// Jeda + retry antar panggilan BE (G01 API List).
+  final BeCallRunner _runner;
 
-  /// Wajib dipanggil sebelum activate() — Liquid butuh data applicant terdaftar.
+  KycBeDataService({KycBeApi? beApi, BeCallRunner? runner})
+      : _beApi = beApi ?? KycBeApi(),
+        _runner = runner ?? BeCallRunner();
+
+  /// 016_RegisterApplicationInfoAPI.
+  ///
+  /// Panggil **sesudah** activate() (G01 API List: "Calling this API
+  /// immediately after executing the Activate Function may result in an error").
   Future<bool> registerApplicationInfo({
-    required String applicantId,
-    required String applicantName,
-    required String dateOfBirth,
-    required String address,
+    required ApplicantInfoPayload payload,
   }) async {
     appLogger.i('[BE-1] Calling RegisterApplicationInfo...');
 
-    final registerResult = await _beApi.registerApplicationInfo(
-      applicantId: applicantId,
-      applicantName: applicantName,
-      dateOfBirth: dateOfBirth,
-      address: address,
+    final registerResult = await _runner.runWithRetry(
+      () => _beApi.registerApplicationInfo(payload: payload),
+      isTransient: (r) =>
+          r == null || BeCallRunner.isTransientMessage(r.errorMessage),
     );
 
     if (registerResult?.isSuccess == true) {
@@ -58,7 +64,11 @@ class KycBeDataService {
   Future<VerificationResultsResponse?> fetchVerificationResults(String applicantId) async {
     appLogger.i('[BE-2] Calling getVerificationResults...');
 
-    final result = await _beApi.getVerificationResults(applicantId);
+    final result = await _runner.runWithRetry(
+      () => _beApi.getVerificationResults(applicantId),
+      isTransient: (r) =>
+          r == null || BeCallRunner.isTransientMessage(r.errorMessage),
+    );
     if (result?.isSuccess == true) {
       appLogger.i('[BE-2] VerificationResults → SUCCESS | score:${result?.faceMatchScore}, liveness:${result?.livenessResult}');
     } else {
@@ -76,7 +86,11 @@ class KycBeDataService {
     ICCardInfoResponse? icCardInfo;
     if (includeICCardInfo) {
       appLogger.i('[BE] Fetching IC Card Info from BE...');
-      icCardInfo = await _beApi.getICCardInfo(applicantId);
+      icCardInfo = await _runner.runWithRetry(
+        () => _beApi.getICCardInfo(applicantId),
+        isTransient: (r) =>
+            r == null || BeCallRunner.isTransientMessage(r.errorMessage),
+      );
       if (icCardInfo?.isSuccess == true) {
         appLogger.i('[BE] IC Card Info received: name=${icCardInfo?.name}');
       } else {
@@ -85,7 +99,11 @@ class KycBeDataService {
     }
 
     appLogger.i('[BE-3] Calling getOcrResultsFromBe...');
-    final ocrResults = await _beApi.getOcrResultsFromBe(applicantId);
+    final ocrResults = await _runner.runWithRetry(
+      () => _beApi.getOcrResultsFromBe(applicantId),
+      isTransient: (r) =>
+          r == null || BeCallRunner.isTransientMessage(r.errorMessage),
+    );
     if (ocrResults?.isSuccess == true) {
       appLogger.i('[BE-3] getOcrResultsFromBe → SUCCESS | name=${ocrResults?.name}');
     } else {
@@ -93,7 +111,11 @@ class KycBeDataService {
     }
 
     appLogger.i('[BE-4] Calling getLivenessImages...');
-    final livenessImages = await _beApi.getLivenessImages(applicantId);
+    final livenessImages = await _runner.runWithRetry(
+      () => _beApi.getLivenessImages(applicantId),
+      isTransient: (r) =>
+          r == null || BeCallRunner.isTransientMessage(r.errorMessage),
+    );
     if (livenessImages?.isSuccess == true) {
       appLogger.i('[BE-4] getLivenessImages → SUCCESS | count:${livenessImages?.livenessImages?.length ?? 0}');
     } else {
@@ -101,7 +123,11 @@ class KycBeDataService {
     }
 
     appLogger.i('[BE-5] Calling getPhotos...');
-    final photos = await _beApi.getPhotos(applicantId);
+    final photos = await _runner.runWithRetry(
+      () => _beApi.getPhotos(applicantId),
+      isTransient: (r) =>
+          r == null || BeCallRunner.isTransientMessage(r.errorMessage),
+    );
     if (photos?.isSuccess == true) {
       appLogger.i('[BE-5] getPhotos → SUCCESS | docs:${photos?.idDocumentPhotos?.length ?? 0}');
     } else {
@@ -121,10 +147,12 @@ class KycBeDataService {
   Future<bool> registerKycResult(String applicantId) async {
     appLogger.i('[BE-6] Calling registerKycResult...');
 
-    final registered = await _beApi.registerKycResult(
-      applicantId: applicantId,
-      kycResult: '0', // 0 = OK, 1 = NG
-      hasSensitiveInfo: true,
+    final registered = await _runner.run(
+      () => _beApi.registerKycResult(
+        applicantId: applicantId,
+        kycResult: '0', // 0 = OK, 1 = NG
+        hasSensitiveInfo: true,
+      ),
     );
 
     if (registered) {

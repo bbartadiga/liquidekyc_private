@@ -1,8 +1,8 @@
 import 'package:http/http.dart' as http;
 
+import '../models/applicant_info_payload.dart';
 import '../models/applicant_info_response.dart';
 import '../models/ic_card_info_response.dart';
-import '../models/kyc_request_information_response.dart';
 import '../models/liveness_images_response.dart';
 import '../models/ocr_results_response.dart';
 import '../models/photos_response.dart';
@@ -96,59 +96,11 @@ class KycBeApi {
         email: email,
       );
 
-  Future<KycRequestInformationResponse?> registerKycRequestInformation({
-    required String applicantId,
-    required String lastName,
-    required String firstName,
-    String? middleName,
-    String? lastNameKana,
-    String? firstNameKana,
-    String? middleNameKana,
-    required String birthday,
-    String? nationality,
-    required String sex,
-    String? zipCode,
-    required String phoneNumber,
-    required String address1,
-    String? address2,
-    String? address3,
-    String? address4,
-  }) =>
-      _applicant.registerKycRequestInformation(
-        applicantId: applicantId,
-        lastName: lastName,
-        firstName: firstName,
-        middleName: middleName,
-        lastNameKana: lastNameKana,
-        firstNameKana: firstNameKana,
-        middleNameKana: middleNameKana,
-        birthday: birthday,
-        nationality: nationality,
-        sex: sex,
-        zipCode: zipCode,
-        phoneNumber: phoneNumber,
-        address1: address1,
-        address2: address2,
-        address3: address3,
-        address4: address4,
-      );
-
+  /// 016_RegisterApplicationInfoAPI — `POST /v1/kyc_request_informations`.
   Future<RegisterApplicationInfoResponse?> registerApplicationInfo({
-    required String applicantId,
-    required String applicantName,
-    required String dateOfBirth,
-    required String address,
-    String? phoneNumber,
-    String? email,
+    required ApplicantInfoPayload payload,
   }) =>
-      _applicant.registerApplicationInfo(
-        applicantId: applicantId,
-        applicantName: applicantName,
-        dateOfBirth: dateOfBirth,
-        address: address,
-        phoneNumber: phoneNumber,
-        email: email,
-      );
+      _applicant.registerApplicationInfo(payload: payload);
 
   // --- Baca data applicant ---
 

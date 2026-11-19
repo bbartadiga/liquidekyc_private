@@ -520,6 +520,102 @@ fvm flutter test                             → All tests passed (52)
   APP log (termasuk log native SDK), HTTP log, dan Telegram sudah ikut
   nerima log native.
 
+### U. Fix BE flow sesuai spec Liquid (P18)
+
+Diverifikasi dari `Liquid POC Docs` + `documents/SDK Function`:
+
+- **Interface Spec v1.45.0 p.28** — Comply to "He" = Initialization → Terms of
+  Use → Document IC Card (COMPLY_HE) → Facial Recognition → **Activate**
+- **Recommended Sequence v1.44.0** — activate = **fungsi SDK terakhir**
+- **G01 API List** — semua Connector API harus **setelah activate()**
+
+#### 3 perubahan
+
+**1. Endpoint 016 RegisterApplicationInfo**
+| | |
+|---|---|
+| Lama | `POST /v1/applicants/{id}/info` → BE balas *"Missing Authentication Token"* |
+| **Baru** | `POST /v1/kyc_request_informations` (spec 016 v1.3.4) |
+
+Body juga diperbaiki sesuai spec: tambah `applicant_id`, `nationality`, `sex`,
+`zip_code`, field kana, `address2..4`, `id_number`. Field opsional null dibuang.
+
+> Path lama **nggak ada** di spec maupun di Postman collection (collection itu
+> mock lokal `localhost:8080`).
+
+**2. BE-1 & BE-2 digeser ke SESUDAH `activate()`**
+- G01 012: "Calling this API **before executing the Activate Function** may
+  result in error code **CE00017**"
+- G01 016: "Calling this API **immediately after executing the Activate
+  Function** may result in an error"
+
+Urutan sekarang: `activate() → BE-1 (016) → BE-2 (012) → BE-3..5 → BE-6 (014)`
+
+**3. Jeda ≥1 detik + retry antar panggilan BE**
+G01: *"Make sure to call after a 1 second interval with several retries"*.
+`BeCallRunner` (baru) — jeda 1 detik + retry 3× untuk kode transien
+(CE00004 / CE00008 / CE00017).
+
+#### File
+
+| File | Perubahan |
+|---|---|
+| `lib/data/models/applicant_info_payload.dart` | **baru** — payload 016 + pemecah nama/alamat sesuai spec |
+| `lib/data/services/be/be_call_runner.dart` | **baru** — jeda + retry |
+| `lib/data/services/be/kyc_be_applicant_api.dart` | `registerApplicationInfo` → path/body spec; `registerKycRequestInformation` dihapus (duplikat) |
+| `lib/data/services/kyc_be_api.dart` | facade mengikuti |
+| `lib/data/services/kyc_be_data_service.dart` | pakai `BeCallRunner` di semua call BE |
+| `lib/persentation/viewmodels/kyc_viewmodel.dart` | BE-1/BE-2 digeser ke setelah `activate()` |
+
+#### Test
+`test/applicant_info_payload_test.dart` — 11 test (body, pemecah nama full-width,
+pemecah alamat, birthday <1900, retry runner) + `test/kyc_be_api_test.dart` diupdate.
+
+#### 🔄 CARA ROLLBACK
+
+Kalau test Tokyo gagal & mau balik ke versi sebelum perubahan ini:
+
+```bash
+cd /Users/admin/Documents/BNI/Digiremit/Dev/module_liquid_ekyc
+
+# Lihat commit yg perlu di-rollback
+git log --oneline -5
+
+# Rollback ke commit SEBELUM fix BE flow
+git revert <commit-hash-fix-BE-flow>     # bikin commit baru (aman buat history)
+
+# atau hard reset (HILANG semua commit sesudahnya — jangan dipakai kalau
+# udah ada commit lain di atasnya)
+git reset --hard <commit-hash-sebelum-fix-BE-flow>
+```
+
+Checkpoint sebelum & sesudah:
+
+| Commit | Isi |
+|---|---|
+| `eb741dd` | refactor + My Number + log pipeline (**SEBELUM** fix BE flow) ← **titik rollback** |
+| `<hash baru>` | fix BE flow: 016 path/body, geser BE-1/BE-2, jeda+retry |
+
+Cara paling aman: `git revert <hash baru>` → history tetap linear, gampang
+dibandyol ke Tokyo.
+
+**Rollback частиyal** (kalau cuma satu bagian yang bermasalah):
+- Endpoint 016 salah lagi → revert `kyc_be_applicant_api.dart` + `kyc_be_api.dart`
+  + `kyc_be_data_service.dart` + `kyc_viewmodel.dart` (bikin `registerApplicationInfo`
+  balikin ke `POST /v1/applicants/{id}/info` + body lama)
+- Activate gagal (`[FINAL] Activate KYC → FAILED`) → geser BE-1/BE-2 balik ke
+  sebelum `activate()` di `kyc_viewmodel.dart`
+- Jeda 1 detik bikin lambat → turunin `BeCallRunner.spacing` ke
+  `Duration(milliseconds: 200)` atau `Duration.zero`
+
+#### ⚠️ Efek samping yang mungkin muncul (bukan bug)
+
+| Gejala | Arti | Tindakan |
+|---|---|---|
+| `[BE-6]` **muncul** sekarang (sebelumnya nggak pernah) | 016 sukses → 014 jalan → Liquid mulai masking image (batch 5 menit) | Wajar. Kalau tes ulang pakai applicantId sama, foto bisa udah masked |
+| Total flow lebih lama ~6 detik | Jeda 1 detik × 6 call | Wajar, loading overlay nutupin |
+| `[BE-2] VerificationResults → SUCCESS` tapi score tetap null | My Number Card emang nggak ada passive auto-verification (`NOT_APPLICABLE`) | Wajar, bukan urutan |
+
 ## 📌 Yang TIDAK boleh berubah (regresi guard)
 
 - Flow COMPLY_HE: `icCard` → `face`, tanpa scan dokumen terpisah

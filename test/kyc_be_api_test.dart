@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:module_liquid/core/constant/liquid_constants.dart';
+import 'package:module_liquid/data/models/applicant_info_payload.dart';
 import 'package:module_liquid/data/services/kyc_be_api.dart';
 
 /// Ngunci shape request ke Liquid Connector API (BE):
@@ -52,25 +53,44 @@ void main() {
       expect(sent.single.url.toString(), '$base/v1/applicants/APP-1/photos');
     });
 
-    test('registerApplicationInfo → POST /v1/applicants/{id}/info', () async {
+    test('registerApplicationInfo → POST /v1/kyc_request_informations', () async {
       final api = apiWith(200, body: '{"status":"ok"}');
 
       await api.registerApplicationInfo(
-        applicantId: 'APP-1',
-        applicantName: 'Budi Santoso',
-        dateOfBirth: '1990-01-02',
-        address: 'Jl. Merdeka 1',
-        phoneNumber: '08123456789',
+        payload: ApplicantInfoPayload(
+          applicantId: 'APP-1',
+          firstName: 'Budi',
+          lastName: 'Santoso',
+          firstNameKana: 'ブディ',
+          lastNameKana: 'サントソ',
+          birthday: '19900102',
+          nationality: 'ID',
+          sex: '1',
+          zipCode: '1000001',
+          phoneNumber: '08123456789',
+          address1: 'Jl. Merdeka 1',
+          address2: 'Jakarta',
+        ),
       );
 
       expect(sent.single.method, 'POST');
-      expect(sent.single.url.toString(), '$base/v1/applicants/APP-1/info');
+      expect(
+        sent.single.url.toString(),
+        '$base/v1/kyc_request_informations',
+      );
       expect(bodyOf(sent.single), {
-        'first_name': 'Budi',
+        'applicant_id': 'APP-1',
         'last_name': 'Santoso',
+        'first_name': 'Budi',
+        'last_name_kana': 'サントソ',
+        'first_name_kana': 'ブディ',
         'birthday': '19900102',
-        'address1': 'Jl. Merdeka 1',
+        'nationality': 'ID',
+        'sex': '1',
+        'zip_code': '1000001',
         'phone_number': '08123456789',
+        'address1': 'Jl. Merdeka 1',
+        'address2': 'Jakarta',
       });
     });
 
@@ -117,25 +137,26 @@ void main() {
       });
     });
 
-    test('registerKycRequestInformation → field opsional dibuang', () async {
+    test('registerApplicationInfo → field opsional null dibuang', () async {
       final api = apiWith(200, body: '{"status":"ok"}');
 
-      await api.registerKycRequestInformation(
-        applicantId: 'APP-1',
-        lastName: 'Santoso',
-        firstName: 'Budi',
-        birthday: '19900102',
-        sex: 'M',
-        phoneNumber: '08123456789',
-        address1: 'Jl. Merdeka 1',
+      await api.registerApplicationInfo(
+        payload: ApplicantInfoPayload(
+          applicantId: 'APP-1',
+          firstName: 'Budi',
+          birthday: '19900102',
+          address1: 'Jl. Merdeka 1',
+        ),
       );
 
       expect(sent.single.url.toString(), '$base/v1/kyc_request_informations');
       final body = bodyOf(sent.single);
       expect(body.containsKey('middle_name'), isFalse);
       expect(body.containsKey('nationality'), isFalse);
+      expect(body.containsKey('phone_number'), isFalse);
       expect(body['applicant_id'], 'APP-1');
       expect(body['first_name'], 'Budi');
+      expect(body['address1'], 'Jl. Merdeka 1');
     });
 
     test('header auth + content-type selalu dikirim', () async {

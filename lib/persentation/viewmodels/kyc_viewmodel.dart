@@ -5,6 +5,7 @@ import '../../core/services/chip_attempt_guard.dart';
 import '../../data/models/kyc_result.dart';
 import '../../data/models/document_result.dart';
 import '../../data/models/face_results.dart';
+import '../../data/models/applicant_info_payload.dart';
 import '../../data/models/chip_result.dart';
 import '../../data/repositories/kyc_repository.dart';
 import '../../data/models/ic_card_info_response.dart';
@@ -517,42 +518,18 @@ class KycViewModel extends ChangeNotifier {
     }
 
     // ========================================
-    // [STEP BE-1] Register Application Info (REQUIRED by Liquid)
-    // WAJIB dipanggil sebelum activate() dan sebelum API lain berfungsi
+    // [FINAL] Activate KYC (fungsi SDK terakhir)
     // ========================================
-    if (_dynamicApplicantId != null && !_isRegisterApplicationInfoSuccess) {
-      // Urutan sumber data: chip (signed JPKI, paling otoritatif) →
-      // OCR (dipakai kalau method-nya nggak baca chip) → data BE → fallback.
-      // Tanpa OCR di tengah, flow tanpa chip (FRONT/COMPLY_TO) ngeirim
-      // data palsu ('User'/'19900101'/'Address') ke BE.
-      final registered = await _beDataService.registerApplicationInfo(
-        applicantId: _dynamicApplicantId!,
-        applicantName: _chipVerificationResult?.chipData?.displayName ??
-                       _ocrResult?.name ??
-                       beICCardInfo?.displayName ??
-                       'User',
-        dateOfBirth: _chipVerificationResult?.chipData?.displayBirthday ??
-                     _ocrResult?.birthday ??
-                     beICCardInfo?.displayBirthday ??
-                     '19900101',
-        address: _chipVerificationResult?.chipData?.fullAddress ??
-                 _ocrResult?.fullAddress ??
-                 beICCardInfo?.fullAddress ??
-                 'Address',
-      );
-      _isRegisterApplicationInfoSuccess = registered;
-      _log('[BE-1] RegisterApplicationInfo → ${registered ? "SUCCESS" : "FAILED"}');
-    }
-
-    // ========================================
-    // [STEP BE-2] Get Verification Results (Face Match Score, Liveness)
-    // ========================================
-    if (_dynamicApplicantId != null && beVerificationResults == null) {
-      beVerificationResults =
-          await _beDataService.fetchVerificationResults(_dynamicApplicantId!);
-      _log('[BE-2] VerificationResults → ${beVerificationResults?.isSuccess == true ? "SUCCESS" : "FAILED"}');
-    }
-
+    //
+    // PENTING: SEMUA Connector API (BE-1, BE-2, dst.) harus dipanggil
+    // SESUDAH activate(). G01 API List:
+    //   016 RegisterApplicationInfo → "Calling this API immediately after
+    //     executing the Activate Function may result in an error"
+    //   012 GetVerificationResults → "Calling this API before executing the
+    //     Activate Function may result in error code CE00017"
+    //
+    // activate() juga mengirim hasil verifikasi (chip + face) ke Liquid,
+    // jadi BE baru punya data yang bisa diambil setelahnya.
     _log('[FINAL] Activate KYC → STARTING...');
     _currentStep = KycStep.activating;
     notifyListeners();
@@ -563,6 +540,41 @@ class KycViewModel extends ChangeNotifier {
     if (activateResult.isSuccess) {
       _log('[FINAL] Activate KYC → SUCCESS | KYC Completed!');
       appLogger.i('[FINAL] Activate KYC → SUCCESS | KYC Completed!');
+
+      // ========================================
+      // [STEP BE-1] Register Application Info (016)
+      // Dipanggil SESUDAH activate() — lihat catatan G01 di atas.
+      // ========================================
+      if (_dynamicApplicantId != null && !_isRegisterApplicationInfoSuccess) {
+        // Urutan sumber data: chip (signed JPKI, paling otoritatif) →
+        // OCR (dipakai kalau method-nya nggak baca chip) → data BE → fallback.
+        // Tanpa OCR di tengah, flow tanpa chip ngeirim data palsu
+        // ('User'/'19900101'/'Address') ke BE.
+        final payload = ApplicantInfoPayload.fromKycData(
+          applicantId: _dynamicApplicantId!,
+          chipData: _chipVerificationResult?.chipData,
+          ocrResult: _ocrResult,
+          selectedNationality: _selectedNationality,
+        );
+        final registered =
+            await _beDataService.registerApplicationInfo(payload: payload);
+        _isRegisterApplicationInfoSuccess = registered;
+        _log(
+          '[BE-1] RegisterApplicationInfo → ${registered ? "SUCCESS" : "FAILED"}',
+        );
+      }
+
+      // ========================================
+      // [STEP BE-2] Get Verification Results (Face Match Score, Liveness)
+      // Dipanggil SESUDAH activate() — kalau sebelum, bisa kena CE00017.
+      // ========================================
+      if (_dynamicApplicantId != null && beVerificationResults == null) {
+        beVerificationResults = await _beDataService
+            .fetchVerificationResults(_dynamicApplicantId!);
+        _log(
+          '[BE-2] VerificationResults → ${beVerificationResults?.isSuccess == true ? "SUCCESS" : "FAILED"}',
+        );
+      }
       
       // ========================================
       // [BE-3..BE-5] Ambil data resmi dari BE
