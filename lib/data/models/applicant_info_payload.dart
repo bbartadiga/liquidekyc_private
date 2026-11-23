@@ -46,6 +46,39 @@ class ApplicantInfoPayload {
   /// 本人確認書類番号 (dipakai untuk auto-judgment option)
   final String? idNumber;
 
+  // --- Field kartu tinggal (spec 016 field 18-23, "Only for residence cards") ---
+
+  /// 在留資格 — format spec: "Any" (nggak ada error control).
+  final String? residentStatus;
+
+  /// 在留期間 — format spec: "Y year M month" / "Y year" / "M month".
+  final String? stayPeriod;
+
+  /// 在留期間の満了日 — `yyyyMMdd`.
+  final String? stayExpireDate;
+
+  /// 有効期限 (izin masuk) — `yyyyMMdd`.
+  final String? permittedDate;
+
+  /// 許可の種類 — format spec: enum, "no error control is applied".
+  final String? kindOfPermission;
+
+  /// 就労制限の有無 — format spec: enum, "no error control is applied".
+  final String? employmentRestriction;
+
+  // --- Varian KODE: hanya untuk kartu Gen-2 (spec 016 field 19, 21-23, 27) ---
+
+  /// 在留資格（コード）— 3 char, master code G05.
+  final String? residentStatusCode;
+
+  /// 在留期間（年）/（月）/（日）— Gen-2 saja.
+  final String? stayPeriodYear;
+  final String? stayPeriodMonth;
+  final String? stayPeriodDay;
+
+  /// 許可の種類（コード）— 2 char, master code G05.
+  final String? kindOfPermissionCode;
+
   const ApplicantInfoPayload({
     required this.applicantId,
     required this.firstName,
@@ -64,6 +97,17 @@ class ApplicantInfoPayload {
     this.address3,
     this.address4,
     this.idNumber,
+    this.residentStatus,
+    this.stayPeriod,
+    this.stayExpireDate,
+    this.permittedDate,
+    this.kindOfPermission,
+    this.employmentRestriction,
+    this.residentStatusCode,
+    this.stayPeriodYear,
+    this.stayPeriodMonth,
+    this.stayPeriodDay,
+    this.kindOfPermissionCode,
   });
 
   /// Body request — field null/kosong dibuang (semua opsional di spec).
@@ -86,6 +130,18 @@ class ApplicantInfoPayload {
       'address3': ?address3,
       'address4': ?address4,
       'id_number': ?idNumber,
+      // Field kartu tinggal — spec 016: "Only for residence cards".
+      'resident_status': ?residentStatus,
+      'stay_period': ?stayPeriod,
+      'stay_expire_date': ?stayExpireDate,
+      'permitted_date': ?permittedDate,
+      'kind_of_permission': ?kindOfPermission,
+      'employment_restriction': ?employmentRestriction,
+      'resident_status_code': ?residentStatusCode,
+      'stay_period_year': ?stayPeriodYear,
+      'stay_period_month': ?stayPeriodMonth,
+      'stay_period_day': ?stayPeriodDay,
+      'kind_of_permission_code': ?kindOfPermissionCode,
     };
   }
 
@@ -100,6 +156,10 @@ class ApplicantInfoPayload {
     required Nationality selectedNationality,
     String? phoneNumber,
   }) {
+    // Data Gen-2 (第2世代在留カード dll) punya sub-object sendiri di chip.
+    final gen2 = chipData?.residenceDocumentGen2;
+    final isGen2 = gen2 != null && !gen2.isEmpty;
+
     final chipName = _splitName(chipData?.name);
     final kanaName = _splitName(chipData?.nameKana);
     final ocrName = _splitName(ocrResult?.name);
@@ -137,7 +197,40 @@ class ApplicantInfoPayload {
       address3: address.address3,
       address4: address.address4,
       idNumber: chipData?.idNumber ?? ocrResult?.idNumber,
+      // Field kartu tinggal (spec 016 field 18-28).
+      //
+      // - Residence Card (Gen 1): varian TEKS, dari OCR
+      //   (resident_status / stay_period / kind_of_permission /
+      //    employment_restriction — format "Any"/enum Jepang).
+      // - Gen-2: varian KODE, dari chip
+      //   (resident_status_code / stay_period_year-month-day /
+      //    kind_of_permission_code — format master code G05).
+      //
+      // Driver license / My Number Card nggak punya field ini sama sekali
+      // ("在留カードのみ" di spec), jadi otomatis kosong.
+      residentStatus: isGen2 ? null : _text(ocrResult?.residentStatus),
+      stayPeriod: isGen2 ? null : _text(ocrResult?.stayPeriod),
+      kindOfPermission: isGen2 ? null : _text(ocrResult?.kindOfPermission),
+      employmentRestriction:
+          isGen2 ? null : _text(ocrResult?.employmentRestriction),
+      residentStatusCode: isGen2 ? _text(gen2.residenceStatusCode) : null,
+      stayPeriodYear: isGen2 ? _text(gen2.stayPeriodYear) : null,
+      stayPeriodMonth: isGen2 ? _text(gen2.stayPeriodMonths) : null,
+      stayPeriodDay: isGen2 ? _text(gen2.stayPeriodDay) : null,
+      kindOfPermissionCode: isGen2 ? _text(gen2.kindOfPermissionCode) : null,
+      // Tanggal berlaku untuk RC (Gen 1) maupun Gen-2.
+      stayExpireDate: _text(ocrResult?.stayExpireDate) ??
+          (isGen2 ? _text(gen2.stayExpireDate) : null),
+      permittedDate: _text(ocrResult?.permittedDate) ??
+          (isGen2 ? _text(gen2.permittedDate) : null),
     );
+  }
+
+  /// Nilai string yang dipangkas whitespace; null kalau kosong.
+  static String? _text(String? value) {
+    if (value == null) return null;
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
   }
 
   /// Pisah nama jadi (lastName, firstName) — aksara Jepang: marga di depan.

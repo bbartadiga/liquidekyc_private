@@ -94,23 +94,21 @@ void main() {
       });
     });
 
-    test('registerKycResult → POST /kyc-result dengan reason', () async {
-      final api = apiWith(200);
+    test('registerKycResult → POST /v1/kyc_results sesuai spec 014', () async {
+      final api = apiWith(201);
 
       final ok = await api.registerKycResult(
         applicantId: 'APP-1',
-        kycResult: 'PASS',
-        hasSensitiveInfo: true,
+        kycResult: '0',
+        hasSensitiveInfo: false,
       );
 
       expect(ok, isTrue);
-      expect(
-        sent.single.url.toString(),
-        '$base/v1/applicants/APP-1/kyc-result',
-      );
+      expect(sent.single.url.toString(), '$base/v1/kyc_results');
       expect(bodyOf(sent.single), {
-        'result': 'PASS',
-        'reason': 'has_sensitive_info',
+        'applicant_id': 'APP-1',
+        'kyc_result': '0',
+        'has_sensitive_info': false,
       });
     });
 

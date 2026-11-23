@@ -34,6 +34,13 @@ class TelegramLogUploader {
   static final int _maxBatchSize = 30;
   static LogLevel _minLevel = LogLevel.warning;
 
+  /// Entry terakhir yang sudah dikirim.
+  ///
+  /// Stream [AppLogger] mengirim SELURUH log tiap kali ada entry baru, jadi
+  /// tanpa penanda ini, entry lama bakal dikirim ulang terus (spam Telegram)
+  /// tiap kali ada log baru.
+  static LogEntry? _lastSentEntry;
+
   static bool get enabled => _enabled;
   static set enabled(bool value) {
     _enabled = value;
@@ -57,10 +64,13 @@ class TelegramLogUploader {
   static void _handleNewLogs(List<LogEntry> allLogs) {
     if (!_enabled || allLogs.isEmpty) return;
 
-    // Stream emit all logs reversed (newest first)
+    // Ambil cuma entry yang belum pernah dikirim.
+    final fresh = freshEntries(allLogs);
+    if (fresh.isEmpty) return;
+
     final newOnes = <LogEntry>[];
     final nativeOnes = <LogEntry>[];
-    for (final entry in allLogs) {
+    for (final entry in fresh) {
       if (entry.level.priority >= _minLevel.priority &&
           _uploadLevels.contains(entry.level.label)) {
         if (entry.tag == _nativeTag) {
@@ -82,6 +92,25 @@ class TelegramLogUploader {
     });
   }
 
+  /// Entry yang belum pernah dikirim (allLogs urut terbaru di depan).
+  @visibleForTesting
+  static List<LogEntry> freshEntries(List<LogEntry> allLogs) {
+    final last = _lastSentEntry;
+    if (last == null) return allLogs;
+
+    final index = allLogs.indexWhere((entry) => identical(entry, last));
+    // Log lama udah ke-truncate dari AppLogger → kirim semua yang ada.
+    if (index < 0) return allLogs;
+    return allLogs.sublist(0, index);
+  }
+
+  /// Entry terakhir yang sudah dikirim (untuk testing).
+  @visibleForTesting
+  static set lastSentEntry(LogEntry? entry) => _lastSentEntry = entry;
+
+  @visibleForTesting
+  static LogEntry? get lastSentEntry => _lastSentEntry;
+
   static Future<void> _sendBatch(List<LogEntry> entries) async {
     if (entries.isEmpty) return;
     final now = DateTime.now();
@@ -90,6 +119,10 @@ class TelegramLogUploader {
       return;
     }
     _lastSentAt = now;
+
+    // Tandai entry terakhir yang terkirim, biar batch berikutnya cuma nirim
+    // yang baru.
+    _lastSentEntry = entries.last;
 
     // Summary by level + tag
     final byLevel = <String, int>{};

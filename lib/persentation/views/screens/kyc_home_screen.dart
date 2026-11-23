@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constant/liquid_constants.dart';
 import '../../../core/services/app_logger.dart';
+import '../../../data/models/ic_card_info_response.dart';
 import '../../../data/services/kyc_be_api.dart';
-import '../../../data/services/kyc_queue_worker.dart';
 import '../../viewmodels/kyc_viewmodel.dart';
+import '../../viewmodels/ordering_information_viewmodel.dart';
 import '../widgets/kyc_be_loading_dialog.dart';
 import '../widgets/kyc_loading_overlay.dart';
-import 'kyc_result_screen.dart';
+import 'ordering_information_screen.dart';
 
 class KycHomeScreen extends StatefulWidget {
   const KycHomeScreen({super.key});
@@ -41,8 +42,8 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.visibility),
-            onPressed: () => _navigateToTestResult(context),
-            tooltip: 'Test Result Screen',
+            onPressed: () => _navigateToOrderingInformation(context),
+            tooltip: 'Ordering Information',
           ),
         ],
       ),
@@ -318,7 +319,11 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     );
   }
 
-  void _navigateToTestResult(BuildContext context) async {
+  /// Shortcut dari ikon mata: buka halaman Ordering Information.
+  ///
+  /// Data IC card dari BE tetap ditarik dulu biar halamannya nggak kosong,
+  /// lalu field-nya diisi dari data chip / OCR yang sudah ada.
+  void _navigateToOrderingInformation(BuildContext context) async {
     final applicantId = _applicantIdController.text.trim();
     if (applicantId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -333,23 +338,42 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
     setState(() => _isLoading = true);
 
     final icCardInfo = await _beApi.getICCardInfo(applicantId);
-    final pendingCount = await KycQueueWorker.getPendingCount();
 
     setState(() => _isLoading = false);
 
     if (!context.mounted) return;
 
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (ctx) => KycResultScreen(
-          isSuccess: true,
-          beICCardInfo: icCardInfo,
-          pendingQueueCount: pendingCount,
-          onDone: () => Navigator.of(ctx).popUntil((route) => route.isFirst),
+    _pushOrderingInformation(context, icCardInfo: icCardInfo);
+  }
+
+  /// Buka halaman Ordering Information dengan data IC chip / OCR.
+  void _pushOrderingInformation(
+    BuildContext context, {
+    ICCardInfoResponse? icCardInfo,
+    bool replace = false,
+  }) {
+    final viewModel = context.read<KycViewModel>();
+
+    final route = MaterialPageRoute(
+      builder: (_) => OrderingInformationScreen(
+        chipData: viewModel.chipVerificationResult?.chipData,
+        sdkOcr: viewModel.ocrResult,
+        beOcr: viewModel.beOcrResults,
+        beIcCardInfo: icCardInfo ?? viewModel.beICCardInfo,
+        idDocumentInformation: viewModel.beIdDocumentInformation,
+        processedInformation: viewModel.beProcessedInformation,
+        documentType: viewModel.selectedDocumentType,
+        initialNationality: OrderingInformationViewModel.nationalityLabel(
+          viewModel.selectedNationality,
         ),
       ),
     );
+
+    if (replace) {
+      Navigator.of(context).pushReplacement(route);
+    } else {
+      Navigator.of(context).push(route);
+    }
   }
 
   void _onStartVerification(BuildContext context, KycViewModel viewModel) async {
@@ -646,33 +670,10 @@ class _KycHomeScreenState extends State<KycHomeScreen> {
         viewModel: viewModel,
         onComplete: () {
           Navigator.pop(dialogContext);
-          // Navigate to result screen after BE data is ready
+          // SDK + BE selesai → langsung ke form Ordering Information yang
+          // field-nya diisi dari data IC chip.
           if (context.mounted) {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (ctx) => KycResultScreen(
-                  isSuccess: true,
-                  result: result,
-                  documentResult: viewModel.documentResult,
-                  faceResult: viewModel.faceResult,
-                  chipResult: viewModel.chipVerificationResult,
-                  beICCardInfo: viewModel.beICCardInfo,
-                  beVerificationResults: viewModel.beVerificationResults,
-                  beOcrResults: viewModel.beOcrResults,
-                  bePhotos: viewModel.bePhotos,
-                  beLivenessImages: viewModel.beLivenessImages,
-                  isRegisterApplicationInfoSuccess: viewModel.isRegisterApplicationInfoSuccess,
-                  ocrName: viewModel.ocrResult?.name,
-                  ocrAddress: viewModel.ocrResult?.address,
-                  ocrDateOfBirth: viewModel.ocrResult?.birthday,
-                  ocrDocumentNumber: viewModel.ocrResult?.idNumber,
-                  ocrNationality: viewModel.beOcrResults?.nationality,
-                  ocrResidenceStatus: viewModel.beOcrResults?.residentStatus,
-                  pendingQueueCount: viewModel.pendingQueueCount,
-                  onDone: () => Navigator.of(ctx).popUntil((route) => route.isFirst),
-                ),
-              ),
-            );
+            _pushOrderingInformation(context, replace: true);
           }
         },
         onError: (error) {

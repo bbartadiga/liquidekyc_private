@@ -13,6 +13,14 @@ class LogSanitizer {
     'name',
     'name_kana',
     'nameKana',
+    'last_name',
+    'lastName',
+    'first_name',
+    'firstName',
+    'last_name_kana',
+    'lastNameKana',
+    'first_name_kana',
+    'firstNameKana',
     'full_name',
     'fullName',
     'previous_name',
@@ -32,8 +40,21 @@ class LogSanitizer {
     'addressCity',
     'address_other',
     'addressOther',
+    'address1',
+    'address2',
+    'address3',
+    'address4',
     'zipCode',
     'zip_code',
+    'expireDate',
+    'expiredDate',
+    'expire_date',
+    'permissionToLand',
+    'permissionToLandDate',
+    'periodToStay',
+    'periodToStayDate',
+    'gender',
+    'sex',
     'id_number',
     'idNumber',
     'id_document_number',
@@ -98,8 +119,11 @@ class LogSanitizer {
         RegExp("'$key'\\s*:\\s*'[^']*'", caseSensitive: false),
         (m) => "'$key':'***'",
       );
+      // Nilai dimask sampai delimiter berikutnya (`,`, `|`, `}`, atau baris
+      // baru) — bukan cuma spasi. Kalau berhenti di spasi, sisa nilainya
+      // (mis. "MINISTRY OF JUSTICE") tetap bocor.
       out = out.replaceAllMapped(
-        RegExp('$key\\s*[:=]\\s*([^,\\s}]+)', caseSensitive: false),
+        RegExp('$key\\s*[:=]\\s*[^,|}\n]+', caseSensitive: false),
         (m) => '$key=***',
       );
     }

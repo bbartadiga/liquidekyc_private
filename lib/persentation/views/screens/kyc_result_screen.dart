@@ -12,6 +12,7 @@ import '../../../data/models/ocr_results_response.dart';
 import '../../../data/models/photos_response.dart';
 import '../../../data/models/verification_results_response.dart';
 import '../../viewmodels/kyc_viewmodel.dart';
+import '../widgets/app_action_buttons.dart';
 import '../widgets/kyc_result_identity_sections.dart';
 import '../widgets/kyc_result_verification_sections.dart';
 import '../widgets/kyc_result_widgets.dart';
@@ -612,41 +613,9 @@ class _KycResultScreenState extends State<KycResultScreen> {
         ],
         const SizedBox(height: 12),
         if (widget.onDone != null)
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: widget.onDone,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'Selesai',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
+          AppFinishButton(onPressed: widget.onDone),
         const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () => Navigator.pushNamed(context, '/debug'),
-            icon: const Icon(Icons.bug_report, size: 18),
-            label: const Text('Lihat Log'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.grey.shade600,
-              side: BorderSide(color: Colors.grey.shade300),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
-        ),
+        const AppLogButton(),
       ],
     );
   }

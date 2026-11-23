@@ -3,9 +3,11 @@ import 'package:http/http.dart' as http;
 import '../models/applicant_info_payload.dart';
 import '../models/applicant_info_response.dart';
 import '../models/ic_card_info_response.dart';
+import '../models/id_document_information_response.dart';
 import '../models/liveness_images_response.dart';
 import '../models/ocr_results_response.dart';
 import '../models/photos_response.dart';
+import '../models/processed_information_response.dart';
 import '../models/token_response.dart';
 import '../models/verification_results_response.dart';
 import 'be/be_api_base.dart';
@@ -117,6 +119,18 @@ class KycBeApi {
 
   Future<PhotosResponse?> getPhotos(String applicantId) =>
       _data.getPhotos(applicantId);
+
+  /// API 007 — data dokumen dari eKYC Manager.
+  Future<IdDocumentInformationResponse?> getIdDocumentInformation(
+    String applicantId,
+  ) =>
+      _data.getIdDocumentInformation(applicantId);
+
+  /// API 027 — data applicant yang sudah diproses Liquid (nama latin).
+  Future<ProcessedInformationResponse?> getProcessedInformation(
+    String applicantId,
+  ) =>
+      _data.getProcessedInformation(applicantId);
 
   Future<LivenessImagesResponse?> getLivenessImages(String applicantId) =>
       _data.getLivenessImages(applicantId);

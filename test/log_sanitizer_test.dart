@@ -50,5 +50,27 @@ void main() {
     test('string kosong aman', () {
       expect(LogSanitizer.sanitize(''), '');
     });
-  });
+  
+    test('nama & alamat terakhir dari applicant payload ikut disensor', () {
+      // Bentuk body yang beneran muncul di log HTTP-REQ (lihat log user).
+      final out = LogSanitizer.sanitize(
+        'body={"applicant_id":"111","last_name":"DHIKA","first_name":"PRATAMA",'
+        '"last_name_kana":"DHIKA","first_name_kana":"PRATAMA",'
+        '"birthday":"19980215","nationality":"ID","sex":"2",'
+        '"zip_code":"1000001","address1":"東京都","address2":"品川区",'
+        '"address3":"上大崎2丁目10番11号 アビティ目黒 401","id_number":"ZO254207410B"}',
+      );
+
+      expect(out, isNot(contains('DHIKA')));
+      expect(out, isNot(contains('PRATAMA')));
+      expect(out, isNot(contains('東京都')));
+      expect(out, isNot(contains('品川区')));
+      expect(out, isNot(contains('上大崎')));
+      expect(out, isNot(contains('アビティ目黒')));
+      expect(out, isNot(contains('ZO254207410B')));
+      expect(out, isNot(contains('19980215')));
+      expect(out, contains('"last_name":"***"'));
+      expect(out, contains('"address1":"***"'));
+    });
+});
 }

@@ -106,6 +106,73 @@ const Map<String, String> liquidNationalityNames3 = {
 };
 
 // ============================================================================
+// Nationality — ISO 3166-1 alpha-2 (2-digit), versi ENGLISH.
+//
+// Dipakai form registrasi (dropdown Nationality) yang labelnya bahasa
+// Inggris, sedangkan tabel di atas dipakai untuk display internal BE/OCR.
+// Key harus sama dengan [liquidNationalityNames] supaya sinkron.
+// ============================================================================
+const Map<String, String> liquidNationalityNamesEn = {
+  'ID': 'Indonesian',
+  'JP': 'Japanese',
+  'PH': 'Filipino',
+  'BR': 'Brazilian',
+  'CN': 'Chinese',
+  'KR': 'South Korean',
+  'VN': 'Vietnamese',
+  'TH': 'Thai',
+  'MM': 'Myanmar',
+  'KH': 'Cambodian',
+  'LA': 'Laotian',
+  'MY': 'Malaysian',
+  'SG': 'Singaporean',
+  'NP': 'Nepali',
+  'IN': 'Indian',
+  'BD': 'Bangladeshi',
+  'PK': 'Pakistani',
+  'LK': 'Sri Lankan',
+  'US': 'American',
+  'CA': 'Canadian',
+  'GB': 'British',
+  'AU': 'Australian',
+  'NZ': 'New Zealander',
+  'DE': 'German',
+  'FR': 'French',
+  'NL': 'Dutch',
+  'RU': 'Russian',
+  'TW': 'Taiwanese',
+  'HK': 'Hong Kong',
+  'MO': 'Macanese',
+};
+
+// ============================================================================
+// Nationality — ISO 3166-1 alpha-3 (3-letter), versi ENGLISH.
+// Key harus sama dengan [liquidNationalityNames3].
+// ============================================================================
+const Map<String, String> liquidNationalityNames3En = {
+  'IDN': 'Indonesian',
+  'JPN': 'Japanese',
+  'PHL': 'Filipino',
+  'CHN': 'Chinese',
+  'KOR': 'South Korean',
+  'VNM': 'Vietnamese',
+  'THA': 'Thai',
+  'MMR': 'Myanmar',
+  'KHM': 'Cambodian',
+  'LAO': 'Laotian',
+  'MYS': 'Malaysian',
+  'SGP': 'Singaporean',
+  'IND': 'Indian',
+  'NPL': 'Nepali',
+  'BGD': 'Bangladeshi',
+  'USA': 'American',
+  'CAN': 'Canadian',
+  'GBR': 'British',
+  'AUS': 'Australian',
+  'BRA': 'Brazilian',
+};
+
+// ============================================================================
 // Residence Card Card Type Code (在留カード／特別永住者証明書の種別)
 // Refs: D7 page 6 (card type enum values)
 // ============================================================================
@@ -163,6 +230,61 @@ String? resolveNationalityName3(String? code) {
     return code;
   }
   return name;
+}
+
+/// Label kebangsaan versi display (bukan kode ISO).
+///
+/// SUMBER: host app `ordering_information_screen.dart` →
+/// `nationalityTypeList = ['INDONESIA', 'JAPANESE']`, dan nilainya
+/// dibandingkan dengan `state.data.nationality == 'Indonesian'`.
+const Map<String, String> liquidNationalityDisplayEn = <String, String>{
+  'INDONESIA': 'Indonesian',
+  'INDONESIAN': 'Indonesian',
+  'JAPANESE': 'Japanese',
+};
+
+/// Resolusi nationality ke label English.
+///
+/// Format yang muncul di data kartu: ISO alpha-2 (`ID`) dan alpha-3 (`IDN`) —
+/// key-nya sama persis dengan tabel canonical project
+/// ([liquidNationalityNames] & [liquidNationalityNames3]), cuma labelnya
+/// bahasa Inggris. Plus nilai display dari BE host app
+/// ([liquidNationalityDisplayEn]).
+///
+/// Kalau formatnya nggak dikenal, return null supaya pemanggil bisa fallback
+/// sendiri (mis. title case).
+String? resolveNationalityLabelEn(String? code) {
+  if (code == null || code.isEmpty) return null;
+  final upper = code.toUpperCase();
+  return liquidNationalityNamesEn[upper] ??
+      liquidNationalityNames3En[upper] ??
+      liquidNationalityDisplayEn[upper];
+}
+
+/// Gender → label form registrasi (`01: MALE`).
+///
+/// Dua format yang dipakai di data kartu:
+///
+/// - Chip : `MALE` / `FEMALE` / `OTHERS`
+/// - OCR  : `1` / `2` / `3` (1 = male, 2 = female, 3 = others)
+String? resolveGenderLabel(String? raw) {
+  if (raw == null) return null;
+  final value = raw.trim();
+  if (value.isEmpty) return null;
+
+  switch (value.toUpperCase()) {
+    case '1':
+    case 'MALE':
+      return '01: MALE';
+    case '2':
+    case 'FEMALE':
+      return '02: FEMALE';
+    case '3':
+    case 'OTHERS':
+      return '03: OTHERS';
+    default:
+      return null;
+  }
 }
 
 String? resolveResidenceCardTypeName(String? code) {

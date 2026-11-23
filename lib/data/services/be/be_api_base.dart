@@ -5,9 +5,11 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../core/constant/liquid_constants.dart';
+import '../../../core/services/app_logger.dart';
 import '../kyc_retry_queue.dart';
 import '../liquid_http_client.dart';
 import 'be_api_config.dart';
+import 'be_call_runner.dart';
 
 typedef ProgressCallback = void Function(String step, bool isLoading);
 
@@ -46,6 +48,18 @@ abstract class BeApiBase {
         'Content-Type': 'application/json',
         'X-Ekyc-Api-key': LiquidConfig.connectorApiKey,
       };
+
+  /// True kalau kegagalan ini layak dicoba lagi.
+  ///
+  /// - 5xx → server-side, retry
+  /// - 409 + kode transien (CE00004 / CE00008 / CE00017) → BE belum selesai
+  /// - selain itu (403 / 404 / 409 dengan kode lain) → permanen, retry
+  ///   cuma buang-buang request
+  bool _isRetryable(int statusCode, String body) {
+    if (statusCode >= 500) return true;
+    if (statusCode == 409) return BeCallRunner.isTransientMessage(body);
+    return false;
+  }
 
   void log(String message) {
     if (kDebugMode) {
@@ -108,7 +122,10 @@ abstract class BeApiBase {
         log('Response status: ${response.statusCode}');
 
         if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
+          // JSON selalu UTF-8 (RFC 8259) → decode dari bodyBytes, bukan
+          // `response.body` yang ikut charset header. Kalau BE nggak kirim
+          // charset, nilai Jepang-nya jadi mojibake.
+          final data = jsonDecode(utf8.decode(response.bodyBytes));
           final message = successLog?.call(data);
           if (message != null) log(message);
           onProgress?.call(progressLabel, false);
@@ -117,7 +134,7 @@ abstract class BeApiBase {
 
         log('ERROR: ${response.statusCode} - ${response.body}');
 
-        if (attempt < beMaxRetries) {
+        if (attempt < beMaxRetries && _isRetryable(response.statusCode, response.body)) {
           await _waitBeforeRetry(delayMs);
           delayMs *= 2;
           attempt++;
@@ -171,11 +188,13 @@ abstract class BeApiBase {
     required BeSuccessHandler<T> onSuccess,
     required BeErrorFactory<T> errorFactory,
     String Function(http.Response response)? successLog,
+    int? maxRetries,
   }) async {
     var attempt = 0;
     var delayMs = beBaseRetryDelayMs;
+    final retryLimit = maxRetries ?? beMaxRetries;
 
-    while (attempt <= beMaxRetries) {
+    while (attempt <= retryLimit) {
       try {
         onProgress?.call('$progressLabel (attempt ${attempt + 1})', true);
 
@@ -192,7 +211,7 @@ abstract class BeApiBase {
 
         log('ERROR: ${response.statusCode} - ${response.body}');
 
-        if (attempt < beMaxRetries) {
+        if (attempt < retryLimit && _isRetryable(response.statusCode, response.body)) {
           await _waitBeforeRetry(delayMs);
           delayMs *= 2;
           attempt++;
@@ -209,9 +228,15 @@ abstract class BeApiBase {
         onProgress?.call(progressLabel, false);
         return errorFactory(response.statusCode, response.body);
       } catch (e) {
+        // PENTING: masukkan ke appLogger — kalau cuma debugPrint, error ini
+        // nggak kelihatan di halaman debug / export / Telegram.
+        appLogger.e(
+          '[BE] Error (attempt ${attempt + 1}) $endpoint: $e',
+          error: e,
+        );
         log('ERROR (attempt ${attempt + 1}): $e');
 
-        if (attempt < beMaxRetries) {
+        if (attempt < retryLimit) {
           await _waitBeforeRetry(delayMs);
           delayMs *= 2;
           attempt++;
@@ -232,6 +257,32 @@ abstract class BeApiBase {
 
     onProgress?.call(progressLabel, false);
     return errorFactory(0, 'Failed after retries');
+  }
+
+  /// Parse body response jadi Map — null kalau body-nya kosong / bukan JSON.
+  ///
+  /// Body 2xx dari BE kadang kosong atau bentuknya beda dari spec. Kalau
+  /// parsing-nya lempar exception, request yang udah sukses malah dianggap
+  /// gagal lalu di-retry → BE balas 409 dan datanya jadi dobel.
+  Map<String, dynamic>? parseJsonBody(http.Response response) {
+    try {
+      if (response.bodyBytes.isEmpty) return null;
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map<String, dynamic>) return decoded;
+      appLogger.w(
+        '[BE] Body response bukan JSON object (HTTP ${response.statusCode}) '
+        '— tetap dianggap sukses',
+        tag: 'BE',
+      );
+      return null;
+    } catch (e) {
+      appLogger.w(
+        '[BE] Body response gagal di-parse (HTTP ${response.statusCode}): $e '
+        '— tetap dianggap sukses',
+        tag: 'BE',
+      );
+      return null;
+    }
   }
 
   /// Tunggu backoff + jitter acak supaya retry tidak menumpuk bareng.

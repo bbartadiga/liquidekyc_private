@@ -58,7 +58,7 @@ class KycVerificationRunner {
     required FaceVerificationType faceType,
     OcrResult? currentOcrResult,
     void Function(KycStep step)? onStep,
-    void Function()? onChipVerified,
+    void Function(ChipVerificationResult chipResult)? onChipVerified,
   }) async {
     final order = method.verificationOrder;
     var stepNum = 11;
@@ -111,7 +111,9 @@ class KycVerificationRunner {
         }
         appLogger.i('[STEP $stepNum] IC Card (NFC) → SUCCESS');
         await ChipAttemptGuard.reset();
-        onChipVerified?.call();
+        // Kirim hasil chip apa adanya — pemanggil butuh data run INI,
+        // bukan hasil run sebelumnya.
+        onChipVerified?.call(chipResult);
 
         // Preview data kartu langsung setelah IC chip — biar UI cepat terisi
         if (ocrResult == null) {

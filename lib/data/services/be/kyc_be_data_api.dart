@@ -1,7 +1,9 @@
 import '../../models/ic_card_info_response.dart';
+import '../../models/id_document_information_response.dart';
 import '../../models/liveness_images_response.dart';
 import '../../models/ocr_results_response.dart';
 import '../../models/photos_response.dart';
+import '../../models/processed_information_response.dart';
 import '../../models/verification_results_response.dart';
 import 'be_api_base.dart';
 import 'be_api_config.dart';
@@ -60,6 +62,52 @@ class KycBeDataApi extends BeApiBase {
       errorFactory: (statusCode, message) =>
           OcrResultsBeResponse.error(statusCode: statusCode, message: message),
       successLog: (_) => 'getOcrResultsFromBe SUCCESS',
+    );
+  }
+
+  /// API 007 — data dokumen yang di-register/di-koreksi di eKYC Manager.
+  ///
+  /// Sumber untuk `stay_expire_date` + `resident_status` yang nggak ada di
+  /// data chip maupun OCR (mis. My Number Card / Driver's License).
+  Future<IdDocumentInformationResponse?> getIdDocumentInformation(
+    String applicantId,
+  ) async {
+    log('getIdDocumentInformation - applicantId: $applicantId');
+
+    return getWithRetry<IdDocumentInformationResponse>(
+      applicantId: applicantId,
+      url: applicantUrl(applicantId, beSubIdDocumentInformation),
+      endpoint: relativeApplicantPath(applicantId, beSubIdDocumentInformation),
+      progressLabel: 'ID Document Information',
+      parse: IdDocumentInformationResponse.fromMap,
+      errorFactory: (statusCode, message) =>
+          IdDocumentInformationResponse.error(
+        statusCode: statusCode,
+        message: message,
+      ),
+      successLog: (_) => 'getIdDocumentInformation SUCCESS',
+    );
+  }
+
+  /// API 027 — data applicant yang sudah diproses Liquid (termasuk nama
+  /// latin).
+  Future<ProcessedInformationResponse?> getProcessedInformation(
+    String applicantId,
+  ) async {
+    log('getProcessedInformation - applicantId: $applicantId');
+
+    return getWithRetry<ProcessedInformationResponse>(
+      applicantId: applicantId,
+      url: applicantUrl(applicantId, beSubProcessedInformation),
+      endpoint: relativeApplicantPath(applicantId, beSubProcessedInformation),
+      progressLabel: 'Processed Information',
+      parse: ProcessedInformationResponse.fromMap,
+      errorFactory: (statusCode, message) =>
+          ProcessedInformationResponse.error(
+        statusCode: statusCode,
+        message: message,
+      ),
+      successLog: (_) => 'getProcessedInformation SUCCESS',
     );
   }
 

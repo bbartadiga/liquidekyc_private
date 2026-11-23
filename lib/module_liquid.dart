@@ -22,3 +22,6 @@ export 'core/constant/liquid_constants.dart';
 export 'persentation/views/screens/kyc_home_screen.dart';
 export 'persentation/views/screens/kyc_result_screen.dart';
 export 'persentation/views/screens/kyc_config_screen.dart';
+export 'persentation/views/screens/ordering_information_screen.dart';
+export 'persentation/viewmodels/ordering_information_viewmodel.dart';
+export 'data/models/ordering_information_draft.dart';

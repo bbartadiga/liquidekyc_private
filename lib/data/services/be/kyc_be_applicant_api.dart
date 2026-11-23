@@ -77,14 +77,29 @@ class KycBeApplicantApi extends BeApiBase {
       endpoint: bePathKycRequestInformations,
       progressLabel: 'Register App Info',
       body: payload.toBody(),
-      onSuccess: (response) =>
-          RegisterApplicationInfoResponse.fromMap(jsonDecode(response.body)),
+      // 201 = record applicant sudah dibuat. Body-nya bisa kosong / bentuknya
+      // beda dari spec — kalau parsing-nya lempar exception, request yang
+      // udah sukses malah di-retry dan BE balas 409.
+      onSuccess: (response) {
+        final data = parseJsonBody(response);
+        if (data == null) {
+          return RegisterApplicationInfoResponse(
+            isSuccess: true,
+            statusCode: response.statusCode,
+          );
+        }
+        return RegisterApplicationInfoResponse.fromMap(data);
+      },
       errorFactory: (statusCode, message) =>
           RegisterApplicationInfoResponse.error(
         statusCode: statusCode,
         message: message,
       ),
       successLog: (_) => 'RegisterApplicationInfo SUCCESS',
+      // Retry lebih sabar: BE memproses activate secara async, jadi 409
+      // "operation is not completed" masih muncul ~10-15 detik setelah
+      // activate() sukses. 4 retry + backoff 1/2/4/8s → window ~15 detik.
+      maxRetries: 4,
     );
   }
 }

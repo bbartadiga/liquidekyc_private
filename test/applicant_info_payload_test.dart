@@ -2,10 +2,103 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:module_liquid/core/constant/liquid_constants.dart';
 import 'package:module_liquid/data/models/applicant_info_payload.dart';
 import 'package:module_liquid/data/models/chip_data.dart';
+import 'package:module_liquid/data/models/ocr_result.dart';
 import 'package:module_liquid/data/services/be/be_call_runner.dart';
 
 /// Payload 016 RegisterApplicationInfo — spec LIQUID_eKYC_016 v1.3.4.
 void main() {
+  group('ApplicantInfoPayload - field kartu tinggal (016 field 18-23)', () {
+    test('dikirim dari OCR, format mentah kartu', () {
+      final payload = ApplicantInfoPayload.fromKycData(
+        applicantId: 'APP-1',
+        chipData: null,
+        ocrResult: OcrResult(
+          name: '山田 太郎',
+          birthday: '19980215',
+          address: '東京都千代田区大手町1-6-1',
+          addressPref: '東京都',
+          addressCity: '千代田区',
+          addressOther: '大手町 1-6-1',
+          residentStatus: ' 永住者 PermanentResident',
+          stayPeriod: '4 年 3 月',
+          stayExpireDate: '20300709',
+          permittedDate: '20250709',
+          kindOfPermission: ' 在留資格変更許可 ( 東京山入国在留管理局長 )',
+          employmentRestriction: ' 就労不可 ',
+        ),
+        selectedNationality: Nationality.japan,
+      );
+
+      final body = payload.toBody();
+      expect(body['resident_status'], '永住者 PermanentResident');
+      expect(body['stay_period'], '4 年 3 月');
+      expect(body['stay_expire_date'], '20300709');
+      expect(body['permitted_date'], '20250709');
+      expect(body['kind_of_permission'], '在留資格変更許可 ( 東京山入国在留管理局長 )');
+      expect(body['employment_restriction'], '就労不可');
+    });
+
+    test('Gen-2 pakai varian KODE dari chip', () {
+      final payload = ApplicantInfoPayload.fromKycData(
+        applicantId: 'APP-1',
+        chipData: LiquidChipDataModel.fromMap(<String, dynamic>{
+          'liquidDocumentType': 'RESIDENCE_DOCUMENT_GEN2',
+          'name': '山田 太郎',
+          'birthday': '19980215',
+          'address': '東京都千代田区大手町1-6-1',
+          'residenceDocumentGen2': <String, dynamic>{
+            'residenceStatusCode': 'T18',
+            'kindOfPermissionCode': 'D0',
+            'stayPeriodYear': '05',
+            'stayPeriodMonths': '03',
+            'stayPeriodDay': '10',
+            'stayExpireDate': '20300709',
+            'permittedDate': '20250709',
+          },
+        }),
+        // OCR Gen-2 balikin × untuk field residence (lihat 013 v1.9.0 hal.21).
+        ocrResult: null,
+        selectedNationality: Nationality.japan,
+      );
+
+      final body = payload.toBody();
+      // Varian kode (Gen-2).
+      expect(body['resident_status_code'], 'T18');
+      expect(body['kind_of_permission_code'], 'D0');
+      expect(body['stay_period_year'], '05');
+      expect(body['stay_period_month'], '03');
+      expect(body['stay_period_day'], '10');
+      expect(body['stay_expire_date'], '20300709');
+      expect(body['permitted_date'], '20250709');
+      // Varian teks (RC Gen 1) nggak dikirim untuk Gen-2.
+      expect(body.containsKey('resident_status'), isFalse);
+      expect(body.containsKey('stay_period'), isFalse);
+      expect(body.containsKey('kind_of_permission'), isFalse);
+      expect(body.containsKey('employment_restriction'), isFalse);
+    });
+
+    test('dikosongin kalau OCR-nya nggak punya (kartu non-tinggal)', () {
+      final payload = ApplicantInfoPayload.fromKycData(
+        applicantId: 'APP-1',
+        chipData: null,
+        ocrResult: OcrResult(
+          name: '山田 太郎',
+          birthday: '19980215',
+          address: '東京都千代田区大手町1-6-1',
+        ),
+        selectedNationality: Nationality.japan,
+      );
+
+      final body = payload.toBody();
+      expect(body.containsKey('resident_status'), isFalse);
+      expect(body.containsKey('stay_period'), isFalse);
+      expect(body.containsKey('stay_expire_date'), isFalse);
+      expect(body.containsKey('permitted_date'), isFalse);
+      expect(body.containsKey('kind_of_permission'), isFalse);
+      expect(body.containsKey('employment_restriction'), isFalse);
+    });
+  });
+
   group('ApplicantInfoPayload.toBody', () {
     test('field opsional null dibuang', () {
       final payload = ApplicantInfoPayload(

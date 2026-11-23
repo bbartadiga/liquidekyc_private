@@ -19,14 +19,17 @@ class KycBeResultApi extends BeApiBase {
   }) async {
     log('registerKycResult - applicantId: $applicantId, result: $kycResult');
 
+    // Body sesuai spec 014 v1.4.2 hal.2:
+    //   { "applicant_id": "...", "kyc_result": "0", "has_sensitive_info": false }
     return postWithRetry<bool>(
       applicantId: applicantId,
-      url: applicantUrl(applicantId, beSubKycResult),
-      endpoint: relativeApplicantPath(applicantId, beSubKycResult),
+      url: '$baseUrl$bePathKycResults',
+      endpoint: bePathKycResults,
       progressLabel: 'Register KYC Result',
       body: {
-        'result': kycResult,
-        'reason': hasSensitiveInfo ? 'has_sensitive_info' : 'All verification passed',
+        'applicant_id': applicantId,
+        'kyc_result': kycResult,
+        'has_sensitive_info': hasSensitiveInfo,
       },
       onSuccess: (_) => true,
       errorFactory: (_, _) => false,

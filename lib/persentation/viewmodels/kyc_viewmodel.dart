@@ -9,9 +9,11 @@ import '../../data/models/applicant_info_payload.dart';
 import '../../data/models/chip_result.dart';
 import '../../data/repositories/kyc_repository.dart';
 import '../../data/models/ic_card_info_response.dart';
+import '../../data/models/id_document_information_response.dart';
 import '../../data/models/liveness_images_response.dart';
 import '../../data/models/ocr_results_response.dart';
 import '../../data/models/photos_response.dart';
+import '../../data/models/processed_information_response.dart';
 import '../../data/models/verification_results_response.dart';
 import '../../data/services/kyc_be_api.dart';
 import '../../data/services/kyc_be_data_service.dart';
@@ -105,6 +107,13 @@ class KycViewModel extends ChangeNotifier {
   PhotosResponse? bePhotos;
   LivenessImagesResponse? beLivenessImages;
 
+  /// API 007 — data dokumen dari eKYC Manager (stay_expire_date,
+  /// resident_status, dll).
+  IdDocumentInformationResponse? beIdDocumentInformation;
+
+  /// API 027 — data applicant yang sudah diproses Liquid (nama latin).
+  ProcessedInformationResponse? beProcessedInformation;
+
   KycStep get currentStep => _currentStep;
   KycResult? get lastResult => _lastResult;
   DocumentResult? get documentResult => _documentResult;
@@ -181,23 +190,45 @@ class KycViewModel extends ChangeNotifier {
   }
 
   /// Bandingkan dokumen yang diminta dengan dokumen yang dibaca dari chip.
-  void _checkDocumentTypeMatch() {
-    final actual = actualDocumentType;
+  ///
+  /// [chipResult] harusnya hasil chip dari run yang SEDANG jalan — kalau
+  /// diambil dari field [_chipVerificationResult], nilainya masih data run
+  /// sebelumnya (callback dipanggil sebelum hasil di-assign).
+  ///
+  /// Return true kalau dokumennya nggak cocok.
+  bool checkDocumentTypeMatch(ChipVerificationResult chipResult) =>
+      isDocumentTypeMismatchFor(_selectedDocumentType, chipResult);
+
+  /// Cek kecocokan tipe dokumen — statis, biar bisa dites tanpa ViewModel.
+  static bool isDocumentTypeMismatchFor(
+    LiquidDocumentType requested,
+    ChipVerificationResult? chipResult,
+  ) {
+    final actual = _documentTypeFrom(chipResult);
     if (actual == null) {
       appLogger.w('[Mismatch] Dokumen aktual tidak dilaporkan SDK');
-      return;
+      return false;
     }
-    if (isDocumentTypeMismatch) {
+    final mismatch = !requested.isCompatibleWith(actual);
+    if (mismatch) {
       appLogger.e(
-        '[Mismatch] Dokumen tidak sesuai! diminta=${_selectedDocumentType.value} '
+        '[Mismatch] Dokumen tidak sesuai! diminta=${requested.value} '
         'dibaca=${actual.value}',
       );
     } else {
       appLogger.i(
-        '[Mismatch] Dokumen sesuai: ${_selectedDocumentType.value} '
+        '[Mismatch] Dokumen sesuai: ${requested.value} '
         '(dibaca=${actual.value})',
       );
     }
+    return mismatch;
+  }
+
+  /// Tipe dokumen yang dilaporkan chip pada [result].
+  static LiquidDocumentType? _documentTypeFrom(ChipVerificationResult? result) {
+    final value = result?.chipData?.liquidDocumentType;
+    if (value == null || value.isEmpty) return null;
+    return LiquidDocumentType.fromString(value);
   }
 
   void setNationality(Nationality nationality) {
@@ -497,7 +528,7 @@ class KycViewModel extends ChangeNotifier {
         _currentStep = step;
         notifyListeners();
       },
-      onChipVerified: _checkDocumentTypeMatch,
+      onChipVerified: checkDocumentTypeMatch,
     );
 
     _chipVerificationResult = outcome.chipResult ?? _chipVerificationResult;
@@ -589,6 +620,8 @@ class KycViewModel extends ChangeNotifier {
         beOcrResults ??= beData.ocrResults;
         beLivenessImages ??= beData.livenessImages;
         bePhotos ??= beData.photos;
+        beIdDocumentInformation ??= beData.idDocumentInformation;
+        beProcessedInformation ??= beData.processedInformation;
       }
 
       // ========================================

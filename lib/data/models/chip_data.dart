@@ -7,10 +7,14 @@ enum Sex {
 
   static Sex fromString(String? value) {
     switch (value?.toUpperCase()) {
+      // Chip pakai nama, OCR pakai angka (1/2/3).
+      case '1':
       case 'MALE':
         return Sex.male;
+      case '2':
       case 'FEMALE':
         return Sex.female;
+      case '3':
       case 'OTHERS':
         return Sex.others;
       default:
@@ -140,7 +144,15 @@ class ResidenceDocumentGen2 {
       comprehensivePermissionCode == null &&
       individualPermission == null &&
       residenceDocumentGen2InfoType == null &&
-      nationalityCode == null;
+      nationalityCode == null &&
+      residenceStatusCode == null &&
+      kindOfPermissionCode == null &&
+      stayPeriodYear == null &&
+      stayPeriodMonths == null &&
+      stayPeriodDay == null &&
+      stayExpireDate == null &&
+      permittedDate == null &&
+      employmentRestriction == null;
 }
 
 class LiquidChipDataModel {
